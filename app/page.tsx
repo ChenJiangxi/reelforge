@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { StatusBadge } from "@/components/StatusBadge";
+import { NewProjectButton } from "@/components/NewProjectButton";
 import { stageLabel } from "@/lib/stages";
 
 export const dynamic = "force-dynamic";
@@ -14,9 +15,12 @@ export default async function Home() {
   return (
     <div>
       <h1 className="mb-1 text-2xl font-bold">项目</h1>
-      <p className="mb-6 text-sm text-foreground/50">
+      <p className="mb-4 text-sm text-foreground/50">
         agent 在后台推进，卡在审核门等你。点开审。
       </p>
+      <div className="mb-6">
+        <NewProjectButton />
+      </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {projects.map((p) => {
           const ordered = [...p.stages].sort((a, b) => a.order - b.order);
@@ -44,7 +48,7 @@ export default async function Home() {
           );
         })}
         {projects.length === 0 && (
-          <div className="text-foreground/40">还没有项目。种子：pnpm db:seed</div>
+          <div className="text-foreground/40">还没有项目。点上面的「+ 新建项目」开一条管线。</div>
         )}
       </div>
     </div>
