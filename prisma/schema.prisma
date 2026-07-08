@@ -1,0 +1,36 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// A video project the reelforge hermit-agent works through, with a review gate per stage.
+model Project {
+  id          String   @id @default(cuid())
+  title       String
+  topic       String
+  platform    String   @default("douyin")
+  status      String   @default("producing") // producing | reviewing | approved | delivered
+  packagePath String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  stages      Stage[]
+}
+
+// One pipeline step. `status: awaiting_review` = a human review gate (learned from hermit-ui's Interaction).
+model Stage {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind      String   // topic | script | footage | voice | edit | subtitles | polish | deliver
+  order     Int
+  status    String   @default("pending") // pending | working | awaiting_review | approved | changes_requested
+  artifacts String?  // JSON: { video?, script?, caption?, cover?, note? }
+  comments  String?  // JSON: [{ ts, text, decision }]
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, order])
+}
