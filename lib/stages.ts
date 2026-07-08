@@ -30,6 +30,7 @@ export type Artifacts = {
   cover?: string;
   note?: string;
   caption?: { title: string; hashtags: string[]; desc: string };
+  images?: string[];
 };
 
 export type Comment = { ts: number; text: string; decision: string };

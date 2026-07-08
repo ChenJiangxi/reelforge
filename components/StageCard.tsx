@@ -45,15 +45,32 @@ export function StageCard({ stage, projectId }: { stage: StageDTO; projectId: st
         <StatusBadge status={stage.status} />
       </div>
 
-      {stage.kind === "edit" && art.video && (
-        <video controls className="w-full max-w-sm rounded-lg border border-border" src={videoSrc} />
+      {art.video && (
+        <video controls className="mt-2 w-full max-w-sm rounded-lg border border-border" src={videoSrc} />
       )}
       {art.script && (
         <pre className="mt-2 whitespace-pre-wrap rounded bg-muted p-3 text-sm text-foreground/80">{art.script}</pre>
       )}
-      {art.cover && stage.kind === "deliver" && (
+      {art.cover && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img alt="cover" src={coverSrc} className="mt-2 w-40 rounded-lg border border-border" />
+        <img
+          alt="cover"
+          src={coverSrc}
+          className={`mt-2 rounded-lg border border-border ${stage.kind === "deliver" ? "w-40" : "w-full max-w-xs"}`}
+        />
+      )}
+      {art.images && art.images.length > 0 && (
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {art.images.map((src, i) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={i}
+              alt={`素材 ${i + 1}`}
+              src={src.startsWith("/seed/") ? src : `/api/media/${projectId}?kind=cover`}
+              className="w-full rounded-lg border border-border"
+            />
+          ))}
+        </div>
       )}
       {art.caption && (
         <div className="mt-2 rounded bg-muted p-3 text-sm">
