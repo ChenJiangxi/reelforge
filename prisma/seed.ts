@@ -1,7 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
-const V = "/Users/macmini003/ops-bilibili/projects/auramate-bilibili/v1-paper-v2";
 
 async function main() {
   await prisma.stage.deleteMany();
@@ -31,7 +30,7 @@ async function main() {
       order: 4,
       status: "awaiting_review",
       artifacts: {
-        video: `${V}/clips/output/final-cut-subbed.mp4`,
+        video: "/seed/paper.mp4",
         script: "开头：AI 算命，能追上人类顶尖命理师吗？ → 论文/benchmark → 五年综合排行(灵伴 46，第 3) → SRP → 收尾。",
         note: "2:06，横版 1080p，纯人声。抖音发布需出竖版——见交付阶段。",
       },
@@ -43,7 +42,7 @@ async function main() {
       order: 7,
       status: "pending",
       artifacts: {
-        cover: `${V}/assets/cover-v.png`,
+        cover: "/seed/cover-v.png",
         caption: {
           title: "AI 算命，能追上人类顶尖命理师吗？我们写了篇论文",
           hashtags: ["#AI算命", "#八字", "#玄学", "#灵伴", "#命理"],

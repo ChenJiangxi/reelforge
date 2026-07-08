@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { createReadStream, existsSync, statSync } from "fs";
 import { Readable } from "stream";
 import type { Artifacts } from "@/lib/stages";
+import { resolveMediaPath } from "@/lib/media";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ proj
   const editArt: Artifacts = edit?.artifacts ? JSON.parse(edit.artifacts) : {};
   const delArt: Artifacts = deliver?.artifacts ? JSON.parse(deliver.artifacts) : {};
 
-  const filePath = kind === "cover" ? delArt.cover || editArt.cover : editArt.video;
+  const filePath = resolveMediaPath(kind === "cover" ? delArt.cover || editArt.cover : editArt.video);
   if (!filePath || !existsSync(filePath)) return new Response("no file", { status: 404 });
 
   const stat = statSync(filePath);

@@ -20,6 +20,10 @@ export function StageCard({ stage, projectId }: { stage: StageDTO; projectId: st
   const art: Artifacts = stage.artifacts ? JSON.parse(stage.artifacts) : {};
   const comments: Comment[] = stage.comments ? JSON.parse(stage.comments) : [];
   const awaiting = stage.status === "awaiting_review";
+  // Bundled /seed/… assets are served statically by Next (Range-supported);
+  // real pipeline renders (absolute fs paths) stream through /api/media.
+  const videoSrc = art.video?.startsWith("/seed/") ? art.video : `/api/media/${projectId}`;
+  const coverSrc = art.cover?.startsWith("/seed/") ? art.cover : `/api/media/${projectId}?kind=cover`;
 
   async function resolve(decision: "approve" | "comment" | "reject") {
     if (decision === "comment" && !comment.trim()) return;
@@ -42,14 +46,14 @@ export function StageCard({ stage, projectId }: { stage: StageDTO; projectId: st
       </div>
 
       {stage.kind === "edit" && art.video && (
-        <video controls className="w-full max-w-sm rounded-lg border border-border" src={`/api/media/${projectId}`} />
+        <video controls className="w-full max-w-sm rounded-lg border border-border" src={videoSrc} />
       )}
       {art.script && (
         <pre className="mt-2 whitespace-pre-wrap rounded bg-muted p-3 text-sm text-foreground/80">{art.script}</pre>
       )}
       {art.cover && stage.kind === "deliver" && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img alt="cover" src={`/api/media/${projectId}?kind=cover`} className="mt-2 w-40 rounded-lg border border-border" />
+        <img alt="cover" src={coverSrc} className="mt-2 w-40 rounded-lg border border-border" />
       )}
       {art.caption && (
         <div className="mt-2 rounded bg-muted p-3 text-sm">

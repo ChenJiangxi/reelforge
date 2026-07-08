@@ -3,6 +3,7 @@ import { createWriteStream, existsSync, mkdirSync } from "fs";
 import path from "path";
 import { prisma } from "./db";
 import type { Artifacts } from "./stages";
+import { resolveMediaPath } from "./media";
 
 // TODO(real): plug the actual generators here —
 //   - vertical cover via the codex 命盘 flow (make-cover-hv.py style)
@@ -20,8 +21,8 @@ export async function runDelivery(projectId: string): Promise<string> {
   const editArt: Artifacts = edit?.artifacts ? JSON.parse(edit.artifacts) : {};
   const delArt: Artifacts = deliver?.artifacts ? JSON.parse(deliver.artifacts) : {};
 
-  const video = editArt.video;
-  const cover = delArt.cover || editArt.cover;
+  const video = resolveMediaPath(editArt.video);
+  const cover = resolveMediaPath(delArt.cover || editArt.cover);
   const caption = delArt.caption || editArt.caption;
 
   const outDir = path.join(process.cwd(), "data", "packages");
