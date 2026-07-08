@@ -56,7 +56,7 @@ export function NewProjectButton() {
         rows={3}
         className="mb-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/50"
       />
-      <div className="mb-3 flex gap-2">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row">
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
