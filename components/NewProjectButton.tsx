@@ -39,14 +39,15 @@ export function NewProjectButton() {
     setBusy(false);
   }
 
-  const selectCls =
-    "rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/50";
+  const fieldCls =
+    "w-full rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent/60";
+  const labelCls = "section-label mb-1.5 block";
 
   if (!open) {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="rounded-lg border border-accent/40 bg-accent/10 px-4 py-2 text-sm font-medium text-accent transition hover:bg-accent/20"
+        className="shrink-0 whitespace-nowrap rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-85"
       >
         + 新建项目
       </button>
@@ -54,55 +55,71 @@ export function NewProjectButton() {
   }
 
   return (
-    <div className="w-full max-w-xl rounded-xl border border-border bg-card p-4">
-      <div className="mb-3 text-sm font-semibold">新建项目</div>
-      <textarea
-        autoFocus
-        value={topic}
-        onChange={(e) => setTopic(e.target.value)}
-        placeholder="你想做个什么视频？一句话说清主题 / 角度，比如：年轻人为什么开始信八字"
-        rows={3}
-        className="mb-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/50"
-      />
-      <div className="mb-2 flex flex-col gap-2 sm:flex-row">
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="标题（可留空，自动取）"
-          className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/50"
+    <div className="absolute right-0 top-full z-30 mt-2 w-[min(36rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-5 shadow-sm">
+      <div className="mb-4 text-sm font-semibold">新建项目</div>
+
+      <div className="mb-3">
+        <label className={labelCls}>主题 / 角度</label>
+        <textarea
+          autoFocus
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+          placeholder="一句话说清,比如:年轻人为什么开始信八字"
+          rows={3}
+          className={`${fieldCls} resize-none`}
         />
-        <select value={platform} onChange={(e) => setPlatform(e.target.value)} className={selectCls}>
-          <option value="douyin">抖音竖版</option>
-          <option value="bilibili">B站横版</option>
-        </select>
       </div>
-      <div className="mb-3 flex flex-wrap gap-2">
-        <select value={voice} onChange={(e) => setVoice(e.target.value)} className={selectCls}>
-          <option value="clone-zh">克隆音·中文</option>
-          <option value="minimax-en">英文旁白</option>
-        </select>
-        <select value={bgm} onChange={(e) => setBgm(e.target.value)} className={selectCls}>
-          <option value="none">无 BGM</option>
-          <option value="yes">带 BGM</option>
-        </select>
-        <select value={duration} onChange={(e) => setDuration(e.target.value)} className={selectCls}>
-          <option value="60">~60 秒</option>
-          <option value="75">~75 秒</option>
-          <option value="90">~90 秒</option>
-        </select>
+
+      <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label className={labelCls}>标题(可留空)</label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} className={fieldCls} />
+        </div>
+        <div>
+          <label className={labelCls}>平台</label>
+          <select value={platform} onChange={(e) => setPlatform(e.target.value)} className={fieldCls}>
+            <option value="douyin">抖音竖版</option>
+            <option value="bilibili">B站横版</option>
+          </select>
+        </div>
+        <div>
+          <label className={labelCls}>配音</label>
+          <select value={voice} onChange={(e) => setVoice(e.target.value)} className={fieldCls}>
+            <option value="clone-zh">克隆音·中文</option>
+            <option value="minimax-en">英文旁白</option>
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>BGM</label>
+            <select value={bgm} onChange={(e) => setBgm(e.target.value)} className={fieldCls}>
+              <option value="none">无</option>
+              <option value="yes">有</option>
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>时长</label>
+            <select value={duration} onChange={(e) => setDuration(e.target.value)} className={fieldCls}>
+              <option value="60">~60s</option>
+              <option value="75">~75s</option>
+              <option value="90">~90s</option>
+            </select>
+          </div>
+        </div>
       </div>
-      {err && <div className="mb-2 text-xs text-red-400">{err}</div>}
+
+      {err && <div className="mb-3 text-xs text-destructive">{err}</div>}
       <div className="flex items-center gap-2">
         <button
           onClick={submit}
           disabled={busy || !topic.trim()}
-          className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-40"
+          className="rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
         >
           {busy ? "创建中…" : "创建"}
         </button>
         <button
           onClick={() => setOpen(false)}
-          className="rounded-lg px-3 py-2 text-sm text-foreground/50 transition hover:text-foreground"
+          className="rounded-full px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
         >
           取消
         </button>

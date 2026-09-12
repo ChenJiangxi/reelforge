@@ -1,15 +1,63 @@
 @import "tailwindcss";
 
+/*
+ * reelforge workbench — "ChatCut-clean": warm-white surfaces, near-black ink,
+ * black primary buttons, ONE orange accent for review gates and key CTAs.
+ * Linear-quiet: hairline borders, flat-to-xs shadows, mono for data.
+ */
 @theme {
-  --color-background: #0b0e14;
-  --color-foreground: #e6e6e6;
-  --color-card: #12151d;
-  --color-muted: #1a1f2b;
-  --color-border: #232838;
-  --color-accent: #f59e0b;
+  --color-background: #faf9f7;
+  --color-foreground: #1c1917;
+  --color-card: #ffffff;
+  --color-muted: #f4f2ef;
+  --color-muted-foreground: #78716c;
+  --color-border: #e8e4de;
+  --color-accent: #e8622c;
+  --color-accent-soft: #fdf0e8;
+  --color-success: #15803d;
+  --color-destructive: #dc2626;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --shadow-xs: 0 1px 2px rgb(28 25 23 / 0.05);
+  --shadow-sm: 0 1px 2px rgb(28 25 23 / 0.06), 0 1px 3px rgb(28 25 23 / 0.08);
 }
 
 body {
   background: var(--color-background);
   color: var(--color-foreground);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* tiny uppercase tracked section label (hermit idiom) */
+.section-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+}
+
+/* quiet focus rings */
+:where(a, button, input, textarea, select):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+/* whisper-quiet motion */
+:where(a, button) {
+  transition: color 160ms cubic-bezier(0, 0, 0.2, 1), background-color 160ms cubic-bezier(0, 0, 0.2, 1),
+    border-color 160ms cubic-bezier(0, 0, 0.2, 1), opacity 160ms cubic-bezier(0, 0, 0.2, 1),
+    transform 120ms cubic-bezier(0, 0, 0.2, 1);
+}
+:where(button):active {
+  transform: translateY(1px);
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

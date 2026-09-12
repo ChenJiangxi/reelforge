@@ -21,6 +21,7 @@ export function StageCard({ stage, projectId }: { stage: StageDTO; projectId: st
   const art: Artifacts = stage.artifacts ? JSON.parse(stage.artifacts) : {};
   const comments: Comment[] = stage.comments ? JSON.parse(stage.comments) : [];
   const awaiting = stage.status === "awaiting_review";
+  const hasMedia = art.video || art.audio || art.cover || (art.images && art.images.length > 0);
 
   async function resolve(decision: "approve" | "comment" | "reject") {
     if (decision === "comment" && !comment.trim()) return;
@@ -41,90 +42,96 @@ export function StageCard({ stage, projectId }: { stage: StageDTO; projectId: st
   }
 
   return (
-    <div className={`rounded-xl border p-4 ${awaiting ? "border-accent/60 bg-accent/5" : "border-border bg-card"}`}>
-      <div className="mb-3 flex items-center gap-2">
-        <span className="font-semibold">{stageLabel(stage.kind)}</span>
+    <div
+      className={`rounded-lg border p-4 shadow-xs ${
+        awaiting ? "border-accent/50 bg-accent-soft/40" : "border-border bg-card"
+      }`}
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-sm font-semibold">{stageLabel(stage.kind)}</span>
         <StatusBadge status={stage.status} />
       </div>
 
       {art.video && (
-        <video controls className="mt-2 w-full max-w-sm rounded-lg border border-border" src={art.video} />
+        <video controls className="mt-2 w-full max-w-sm rounded-md border border-border" src={art.video} />
       )}
-      {art.audio && (
-        <audio controls className="mt-2 w-full max-w-sm" src={art.audio} />
-      )}
+      {art.audio && <audio controls className="mt-2 w-full max-w-sm" src={art.audio} />}
       {art.script && (
-        <pre className="mt-2 whitespace-pre-wrap rounded bg-muted p-3 text-sm text-foreground/80">{art.script}</pre>
+        <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-sm leading-relaxed text-foreground/85">
+          {art.script}
+        </pre>
       )}
       {art.cover && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           alt="cover"
           src={art.cover}
-          className={`mt-2 rounded-lg border border-border ${stage.kind === "deliver" ? "w-40" : "w-full max-w-xs"}`}
+          className={`mt-2 rounded-md border border-border ${stage.kind === "deliver" ? "w-40" : "w-full max-w-xs"}`}
         />
       )}
       {art.images && art.images.length > 0 && (
         <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
           {art.images.map((src, i) => (
             // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={i}
-              alt={`素材 ${i + 1}`}
-              src={src}
-              className="w-full rounded-lg border border-border"
-            />
+            <img key={i} alt={`素材 ${i + 1}`} src={src} className="w-full rounded-md border border-border" />
           ))}
         </div>
       )}
       {art.caption && (
-        <div className="mt-2 rounded bg-muted p-3 text-sm">
+        <div className="mt-2 rounded-md bg-muted p-3 text-sm">
           <div className="font-medium">{art.caption.title}</div>
           <div className="mt-1 text-accent">{art.caption.hashtags.join(" ")}</div>
-          <div className="mt-1 text-foreground/60">{art.caption.desc}</div>
+          <div className="mt-1 text-muted-foreground">{art.caption.desc}</div>
         </div>
       )}
-      {art.note && <p className="mt-2 text-sm text-foreground/60">{art.note}</p>}
+      {art.note && (
+        <p className={`mt-2 whitespace-pre-wrap text-sm ${art.note.startsWith("FAILED:") ? "text-destructive" : "text-muted-foreground"}`}>
+          {art.note}
+        </p>
+      )}
+      {!hasMedia && !art.script && !art.note && !art.caption && stage.status === "pending" && (
+        <p className="text-sm text-muted-foreground/60">等上游通过，agent 才会动手。</p>
+      )}
 
       {comments.length > 0 && (
-        <div className="mt-3 space-y-1 text-xs text-foreground/60">
+        <div className="mt-3 space-y-1 border-t border-border pt-3 text-xs text-muted-foreground">
           {comments.map((c, i) => (
             <div key={i}>
-              💬 {c.text} <span className="text-foreground/30">({c.decision})</span>
+              💬 {c.text} <span className="text-muted-foreground/50">({c.decision})</span>
             </div>
           ))}
         </div>
       )}
 
       {awaiting && (
-        <div className="mt-4 border-t border-accent/20 pt-3">
+        <div className="mt-4 border-t border-accent/25 pt-3">
           <textarea
             value={comment}
             onChange={(e) => setComment(e.target.value)}
-            placeholder="批注（可指到具体某句/某段）…"
+            placeholder="批注(可指到具体某句/某段)…"
             rows={2}
-            className="mb-2 w-full rounded border border-border bg-background p-2 text-sm outline-none focus:border-accent/50"
+            className="mb-2 w-full rounded-md border border-border bg-card p-2 text-sm outline-none focus:border-accent/60"
           />
-          {err && <div className="mb-2 text-xs text-red-400">{err}</div>}
+          {err && <div className="mb-2 text-xs text-destructive">{err}</div>}
           <div className="flex gap-2">
             <button
               disabled={busy}
               onClick={() => resolve("approve")}
-              className="rounded bg-accent px-4 py-1.5 text-sm font-medium text-black disabled:opacity-50"
+              className="rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
             >
               通过
             </button>
             <button
               disabled={busy}
               onClick={() => resolve("comment")}
-              className="rounded border border-border px-4 py-1.5 text-sm disabled:opacity-50"
+              className="rounded-full border border-border px-4 py-1.5 text-sm hover:border-foreground/30 disabled:opacity-40"
             >
               批注
             </button>
             <button
               disabled={busy}
               onClick={() => resolve("reject")}
-              className="rounded border border-red-500/40 px-4 py-1.5 text-sm text-red-400 disabled:opacity-50"
+              className="rounded-full bg-destructive/10 px-4 py-1.5 text-sm text-destructive hover:bg-destructive/15 disabled:opacity-40"
             >
               打回
             </button>
@@ -136,9 +143,9 @@ export function StageCard({ stage, projectId }: { stage: StageDTO; projectId: st
         <div className="mt-3">
           <a
             href={`/api/download/${projectId}`}
-            className="inline-block rounded border border-accent/50 px-3 py-1.5 text-sm text-accent hover:bg-accent/10"
+            className="inline-block rounded-full border border-accent/60 px-3 py-1.5 text-sm text-accent hover:bg-accent-soft"
           >
-            ⬇ 下载打包（视频 + 封面 + 文案）
+            ⬇ 下载打包(视频 + 封面 + 文案)
           </a>
         </div>
       )}

@@ -30,7 +30,7 @@ function LoginForm() {
   }
 
   return (
-    <form onSubmit={submit} className="w-full max-w-xs rounded-xl border border-border bg-card p-6">
+    <form onSubmit={submit} className="w-full max-w-xs rounded-xl border border-border bg-card p-6 shadow-sm">
       <div className="mb-4 text-lg font-bold tracking-tight">
         reel<span className="text-accent">forge</span>
       </div>
@@ -40,13 +40,13 @@ function LoginForm() {
         value={code}
         onChange={(e) => setCode(e.target.value)}
         placeholder="访问口令"
-        className="mb-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/50"
+        className="mb-3 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/60"
       />
-      {err && <div className="mb-2 text-xs text-red-400">{err}</div>}
+      {err && <div className="mb-2 text-xs text-destructive">{err}</div>}
       <button
         type="submit"
         disabled={busy || !code}
-        className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background disabled:opacity-40"
+        className="w-full rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
       >
         进入
       </button>
