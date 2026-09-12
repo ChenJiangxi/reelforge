@@ -23,13 +23,22 @@ export function ChatPanel({
 
   // (page-wide freshness comes from <LiveRefresh /> in the layout)
 
+  // Drop optimistic messages once the server copy arrives — otherwise every
+  // sent message shows twice (local pending + server message).
+  useEffect(() => {
+    setPending((p) => p.filter((pm) => !messages.some((m) => m.role === pm.role && m.text === pm.text)));
+  }, [messages]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length, pending.length]);
 
+  const sendingRef = useRef(false);
+
   async function send() {
     const t = text.trim();
-    if (!t || busy) return;
+    if (!t || sendingRef.current) return;
+    sendingRef.current = true;
     setBusy(true);
     setText("");
     setPending((p) => [...p, { role: "user", text: t, ts: Date.now() }]);
@@ -45,6 +54,7 @@ export function ChatPanel({
     } catch {
       setPending((p) => [...p, { role: "agent", text: "网络错误,稍后再试。", ts: Date.now() }]);
     }
+    sendingRef.current = false;
     setBusy(false);
   }
 
