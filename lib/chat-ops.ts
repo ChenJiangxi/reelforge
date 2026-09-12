@@ -2,13 +2,14 @@
 // The video is a sequence of 分句 clips (大字卡 + 配音), so "对话剪辑" =
 // natural-language ops on that clip list, then downstream stages regenerate.
 
-export type Clip = { name: string; text: string; visual?: string };
+export type Clip = { name: string; text: string; visual?: string; asset?: string };
 
 export type ChatOp =
   | { action: "edit_text"; clip: string; text: string }
   | { action: "delete_clip"; clip: string }
   | { action: "insert_after"; clip: string; text: string; visual?: string }
   | { action: "edit_visual"; clip: string; visual: string }
+  | { action: "assign_asset"; clip: string; asset: string }
   | { action: "redo_stage"; kind: string; note: string }
   | { action: "review"; decision: "approve" | "reject"; note?: string }
   | { action: "reply"; text: string };
@@ -22,6 +23,7 @@ export async function parseChat(
   clips: Clip[],
   project: { topic: string; title: string },
   awaiting?: { kind: string; label: string } | null,
+  assets?: { name: string; kind: string }[],
 ): Promise<ParsedChat> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) {
@@ -30,6 +32,9 @@ export async function parseChat(
   const clipList = clips.length
     ? clips.map((c) => `${c.name}: "${c.text}"(画面:${c.visual || "无"})`).join("\n")
     : "(还没有分句——脚本阶段还没产出)";
+  const assetList = assets?.length
+    ? `\n素材库(她上传的真素材):\n${assets.map((a) => `- "${a.name}"(${a.kind === "video" ? "录屏视频" : "图片"})`).join("\n")}\n她说"第N拍/第N句用XX录屏/图"时 → assign_asset。`
+    : "";
 
   const awaitingBlock = awaiting
     ? `【当前状态:「${awaiting.label}」阶段正在等她审】
@@ -56,6 +61,7 @@ review 操作优先于一切普通操作——她在审,不是在下新需求。
 - {"action":"delete_clip","clip":"c04"} 删某句
 - {"action":"insert_after","clip":"c04","text":"新句子","visual":"画面简报"} 在某句后插一句
 - {"action":"edit_visual","clip":"c02","visual":"新画面简报"} 只改某句的画面卡
+- {"action":"assign_asset","clip":"c03","asset":"素材文件名"} 指定某拍用素材库里的录屏/图片
 - {"action":"redo_stage","kind":"阶段","note":"具体修改指示"} 重做整个阶段(阶段∈ topic|script|footage|voice|edit|subtitles|deliver;用于"封面换一版""配音慢点""文案重写"这类整阶段的活)
 - {"action":"reply","text":"回复"} 不需要改片子(闲聊/提问),直接回话
 ${awaitingBlock}
@@ -69,6 +75,7 @@ ${awaitingBlock}
           content: `片子主题:${project.topic}
 当前分句:
 ${clipList}
+${assetList}
 
 她说:${userText}`,
         },
@@ -108,6 +115,12 @@ export function applyOps(clips: Clip[], ops: ChatOp[]): { clips: Clip[]; voiceDi
     } else if (op.action === "edit_visual") {
       const i = idx(op.clip);
       if (i >= 0 && op.visual?.trim()) { out[i] = { ...out[i], visual: op.visual.trim() }; footageDirty = true; }
+    } else if (op.action === "assign_asset") {
+      const i = idx(op.clip);
+      if (i >= 0 && op.asset?.trim()) {
+        out[i] = { ...out[i], asset: op.asset.trim() };
+        footageDirty = true;
+      }
     }
   }
   out.forEach((c, i) => { c.name = `c${String(i + 1).padStart(2, "0")}`; });

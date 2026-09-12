@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { readdirSync } from "fs";
+import path from "path";
 import { prisma } from "@/lib/db";
 import { checkWorkerAuth } from "@/lib/worker-auth";
+import { MEDIA_DIR } from "@/lib/media";
 import type { Comment } from "@/lib/stages";
 
 // GET /api/worker/poll — stages the worker may claim:
@@ -42,10 +45,25 @@ export async function GET(req: NextRequest) {
       bgm: s.project.bgm,
       aspect: s.project.aspect,
       duration: s.project.duration,
+      assets: listAssets(s.projectId),
       artifacts: s.artifacts ? JSON.parse(s.artifacts) : {},
       comment: s.status === "changes_requested" ? last?.text ?? null : null,
       upstream,
     });
   }
   return NextResponse.json(items);
+}
+
+// Uploaded assets (录屏/图片) — scanned from disk, no schema needed.
+function listAssets(projectId: string) {
+  const dir = path.join(MEDIA_DIR, projectId, "assets");
+  let files: string[] = [];
+  try { files = readdirSync(dir); } catch { return []; }
+  return files
+    .filter((f) => /\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)$/i.test(f))
+    .map((f) => ({
+      name: f,
+      url: `/api/media/${projectId}/assets/${encodeURIComponent(f)}`,
+      kind: /\.(mp4|mov|webm|m4v)$/i.test(f) ? "video" : "image",
+    }));
 }

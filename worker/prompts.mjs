@@ -98,16 +98,22 @@ ${JSON.stringify(draft, null, 1)}
     },
   ],
 
-  card: (item, clip, i, n) => [
-    {
-      role: "system",
-      content: `你是短视频画面设计,把一节口播设计成一张卡的内容。\n${TASTE}\n卡片语言:${item.voice === "minimax-en" ? "英文" : "中文"}。`,
-    },
-    {
-      role: "user",
-      content: `第 ${i + 1}/${n} 拍(${clip.beat || "?"},视觉类型:${clip.visual_type || "text"}):
+  card: (item, clip, i, n) => {
+    const assets = (item.assets || []).filter((a) => a.kind === "video" || a.kind === "image");
+    const assetBlock = assets.length
+      ? `\n\n项目素材库(她上传的真素材,能用就用——真素材永远比字卡好):\n${assets.map((a) => `- "${a.name}"(${a.kind === "video" ? "录屏视频" : "图片"})`).join("\n")}
+如果这一拍该用素材库里的某个素材(比如这拍在讲产品功能,正好有对应录屏),返回 {"asset": "文件名"} 而不是字卡设计。别把素材浪费在不相关的拍上;没有合适的就正常设计字卡。`
+      : "";
+    return [
+      {
+        role: "system",
+        content: `你是短视频画面设计,把一节口播设计成一张卡的内容。\n${TASTE}\n卡片语言:${item.voice === "minimax-en" ? "英文" : "中文"}。`,
+      },
+      {
+        role: "user",
+        content: `第 ${i + 1}/${n} 拍(${clip.beat || "?"},视觉类型:${clip.visual_type || "text"}):
 口播:"${clip.text}"
-画面简报:${clip.visual || "(无,自行设计)"}
+画面简报:${clip.visual || "(无,自行设计)"}${assetBlock}
 
 设计这张卡的内容,返回 JSON:
 {
@@ -119,8 +125,9 @@ ${JSON.stringify(draft, null, 1)}
   "step_no": "仅 step 卡用:第几步的数字,没有则空字符串",
   "foot": "底部一行小字备注(≤16字,通常空)"
 }`,
-    },
-  ],
+      },
+    ];
+  },
 
   cover: (item, topic, script) => [
     {

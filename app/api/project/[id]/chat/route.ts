@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { readdirSync } from "fs";
+import path from "path";
 import { prisma } from "@/lib/db";
 import { parseChat, applyOps, type Clip, type ChatOp } from "@/lib/chat-ops";
 import { resolveStage } from "@/lib/resolve-stage";
 import { STAGE_ORDER, stageLabel } from "@/lib/stages";
+import { MEDIA_DIR } from "@/lib/media";
+
+function projectAssets(projectId: string): { name: string; kind: string }[] {
+  const dir = path.join(MEDIA_DIR, projectId, "assets");
+  let files: string[] = [];
+  try { files = readdirSync(dir); } catch { return []; }
+  return files
+    .filter((f) => /\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)$/i.test(f))
+    .map((f) => ({ name: f, kind: /\.(mp4|mov|webm|m4v)$/i.test(f) ? "video" : "image" }));
+}
 
 // Never trust the LLM's stage name — map by what the instruction is ABOUT.
 // Note text wins over the raw kind ("封面" → deliver even if it said "topic").
@@ -46,6 +58,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const scriptArt = scriptStage?.artifacts ? JSON.parse(scriptStage.artifacts) : {};
   const clips: Clip[] = Array.isArray(scriptArt.clips) ? scriptArt.clips : [];
   const awaiting = project.stages.find((s) => s.status === "awaiting_review") ?? null;
+  const assets = projectAssets(id);
 
   let parsed;
   try {
@@ -54,6 +67,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       clips,
       project,
       awaiting ? { kind: awaiting.kind, label: stageLabel(awaiting.kind) } : null,
+      assets,
     );
   } catch (e) {
     const reply = `解析失败(${e instanceof Error ? e.message : "LLM 错误"}),你的消息我记下了,稍后再试。`;
@@ -79,7 +93,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
   }
 
-  const clipOps = parsed.ops.filter((o) => o.action !== "reply" && o.action !== "redo_stage" && o.action !== "review");
+  // ── clip-level edits ──
+  const assetNames = new Set(assets.map((a) => a.name));
+  const clipOps = parsed.ops.filter((o) =>
+    o.action === "assign_asset" ? assetNames.has(o.asset) : o.action !== "reply" && o.action !== "redo_stage" && o.action !== "review",
+  );
   const redoOps = parsed.ops.filter((o): o is Extract<ChatOp, { action: "redo_stage" }> => o.action === "redo_stage");
   const notes: string[] = [];
 

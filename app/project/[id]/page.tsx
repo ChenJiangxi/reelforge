@@ -1,7 +1,11 @@
 import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
+import { readdirSync, statSync } from "fs";
+import path from "path";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ProjectWorkspace } from "@/components/ProjectWorkspace";
+import { AssetBar, type Asset } from "@/components/AssetBar";
+import { MEDIA_DIR } from "@/lib/media";
 import type { ClipThumb, StageView } from "@/components/PreviewPane";
 import type { Artifacts, Comment } from "@/lib/stages";
 import { ASPECT_OPTIONS, voiceLabel } from "@/lib/stages";
@@ -49,6 +53,19 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     }),
   );
 
+  // 素材库(录屏/图片),扫盘得来
+  const assetsDir = path.join(MEDIA_DIR, project.id, "assets");
+  let assetFiles: string[] = [];
+  try { assetFiles = readdirSync(assetsDir); } catch { /* none */ }
+  const assets: Asset[] = assetFiles
+    .filter((f) => /\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)$/i.test(f))
+    .map((f) => ({
+      name: f,
+      url: `/api/media/${project.id}/assets/${encodeURIComponent(f)}`,
+      kind: /\.(mp4|mov|webm|m4v)$/i.test(f) ? "video" : "image",
+      size: statSync(path.join(assetsDir, f)).size,
+    }));
+
   return (
     <div className="max-w-6xl">
       <a href="/" className="text-sm text-muted-foreground hover:text-foreground">
@@ -66,6 +83,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           </span>
         ))}
       </div>
+
+      <AssetBar projectId={project.id} assets={assets} />
 
       <ProjectWorkspace
         projectId={project.id}

@@ -115,6 +115,7 @@ async function footage(item) {
   if (!clips?.length) throw new Error("上游脚本没有 clips");
   const dir = workDir(item, "cards");
   const size = sizeFor(item.aspect);
+  const assets = item.assets || [];
   // Reuse card designs from a previous pass for clips whose text is unchanged —
   // chat edits usually touch one line; regenerating all designs is waste.
   const prevByName = new Map(
@@ -125,14 +126,43 @@ async function footage(item) {
   for (let i = 0; i < clips.length; i++) {
     const clip = clips[i];
     const prev = prevByName.get(clip.name);
-    let content;
-    if (prev && !item.reviewNote && prev.text === clip.text && prev.big) {
-      content = { type: prev.type, kicker: prev.kicker, big: prev.big, sub: prev.sub, foot: prev.foot };
-      console.log(`  [footage] ${clip.name} reuse design`);
-    } else {
-      console.log(`  [footage] ${clip.name} designing…`);
-      content = await chatJSON(guided(item, PROMPTS.card(item, clip, i, clips.length)), { temperature: 0.6 });
+    // 素材优先:聊天指定的(clip.asset)> LLM 挑的 > 字卡
+    let assetName = clip.asset || null;
+    let content = null;
+    if (!assetName) {
+      if (prev && !item.reviewNote && prev.text === clip.text && (prev.big || prev.asset)) {
+        if (prev.asset) assetName = prev.asset;
+        else content = { type: prev.type, kicker: prev.kicker, big: prev.big, sub: prev.sub, foot: prev.foot, big2: prev.big2, step_no: prev.step_no };
+        console.log(`  [footage] ${clip.name} reuse ${assetName ? "asset " + assetName : "design"}`);
+      } else {
+        console.log(`  [footage] ${clip.name} designing…`);
+        content = await chatJSON(guided(item, PROMPTS.card(item, clip, i, clips.length)), { temperature: 0.6 });
+        if (content.asset && assets.some((a) => a.name === content.asset)) {
+          assetName = content.asset;
+          content = null;
+        }
+      }
     }
+
+    if (assetName) {
+      const asset = assets.find((a) => a.name === assetName);
+      if (!asset) throw new Error(`素材 ${assetName} 不在项目素材库`);
+      let posterUrl = asset.url;
+      if (asset.kind === "video") {
+        // poster frame so the cards grid / timeline has something to show
+        const local = join(workDir(item, "assets"), asset.name);
+        if (!existsSync(local)) await download(asset.url, local);
+        const poster = join(dir, `${clip.name}-poster.png`);
+        await ffmpeg(["-ss", "0.5", "-i", local, "-frames:v", "1", "-vf", `scale=${size.width}:${size.height}:force_original_aspect_ratio=increase,crop=${size.width}:${size.height}`, poster]);
+        const up = await upload(item.projectId, poster, `asset-${clip.name}-poster.png`);
+        posterUrl = up.url;
+      }
+      console.log(`  [footage] ${clip.name} uses asset ${assetName}`);
+      images.push(posterUrl);
+      cards.push({ name: clip.name, text: clip.text, asset: assetName });
+      continue;
+    }
+
     const png = join(dir, `${clip.name}.png`);
     await renderCard(content, size, png);
     console.log(`  [footage] ${clip.name} rendered, uploading`);
@@ -141,7 +171,12 @@ async function footage(item) {
     cards.push({ name: clip.name, text: clip.text, ...content });
   }
   await closeBrowser();
-  return { images, cards, note: `${images.length} 张大字卡(${item.aspect})。画面和台词是否对得上,请审。` };
+  const assetCount = cards.filter((c) => c.asset).length;
+  return {
+    images,
+    cards,
+    note: `${images.length} 拍画面(${item.aspect})${assetCount ? `,其中 ${assetCount} 拍用了你的真素材` : ""}。画面和台词是否对得上,请审。`,
+  };
 }
 
 async function voice(item) {
@@ -175,19 +210,32 @@ async function voice(item) {
   };
 }
 
-// fetch footage cards / regenerate voice locally if a previous run's files are gone
+// fetch footage sources / regenerate voice locally if a previous run's files are gone
 async function ensureInputs(item) {
   const up = item.upstream || {};
   const cardsDir = workDir(item, "cards");
+  const assetsDir = workDir(item, "assets");
   const voiceDir = workDir(item, "voice");
   const meta = up.voice?.voiceMeta?.clips;
+  const cardsMeta = up.footage?.cards || [];
   const images = up.footage?.images || [];
-  const cards = [];
-  for (let i = 0; i < images.length; i++) {
-    const name = up.script.clips[i].name;
-    const p = join(cardsDir, `${name}.png`);
-    if (!existsSync(p)) await download(images[i], p);
-    cards.push(p);
+  const assets = item.assets || [];
+
+  // per-clip visual source: 真素材(录屏/图片) > 字卡
+  const visuals = [];
+  for (let i = 0; i < cardsMeta.length; i++) {
+    const cm = cardsMeta[i];
+    if (cm.asset) {
+      const asset = assets.find((a) => a.name === cm.asset);
+      if (!asset) throw new Error(`素材 ${cm.asset} 不在项目素材库`);
+      const p = join(assetsDir, cm.asset);
+      if (!existsSync(p)) await download(asset.url, p);
+      visuals.push({ kind: asset.kind, path: p });
+    } else {
+      const p = join(cardsDir, `${cm.name}.png`);
+      if (!existsSync(p) && images[i]) await download(images[i], p);
+      visuals.push({ kind: "image", path: p });
+    }
   }
   const voices = [];
   for (const m of meta || []) {
@@ -195,25 +243,29 @@ async function ensureInputs(item) {
     if (!existsSync(p)) await voiceClip(item, m, voiceDir);
     voices.push(p);
   }
-  return { cards, voices, meta };
+  return { visuals, voices, meta };
 }
 
 async function edit(item) {
-  const { cards, voices, meta } = await ensureInputs(item);
-  if (!cards.length || cards.length !== voices.length) throw new Error("卡片和配音数量对不上");
+  const { visuals, voices, meta } = await ensureInputs(item);
+  if (!visuals.length || visuals.length !== voices.length) throw new Error("画面和配音数量对不上");
   const { width: W, height: H } = sizeFor(item.aspect);
   const dir = workDir(item, "edit");
   const fps = 30;
 
-  // 1) per-clip video segments: subtle zoom into the card, length = voice + GAP
+  // 1) per-clip video segments: card/image gets a subtle zoom; 录屏裁切铺满
   const segs = [];
-  for (let i = 0; i < cards.length; i++) {
+  for (let i = 0; i < visuals.length; i++) {
     const segDur = meta[i].dur + GAP;
     const frames = Math.ceil(segDur * fps);
     const seg = join(dir, `seg-${meta[i].name}.mp4`);
-    const zoom = `scale=${W * 2}:${H * 2}:flags=lanczos,zoompan=z='1+0.10*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${fps},format=yuv420p`;
-    await ffmpeg(["-loop", "1", "-framerate", String(fps), "-t", segDur.toFixed(3), "-i", cards[i], "-vf", zoom, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
-    console.log(`  [edit] seg ${meta[i].name} ${segDur.toFixed(1)}s done`);
+    if (visuals[i].kind === "video") {
+      await ffmpeg(["-stream_loop", "-1", "-i", visuals[i].path, "-t", segDur.toFixed(3), "-vf", `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${fps},format=yuv420p`, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
+    } else {
+      const zoom = `scale=${W * 2}:${H * 2}:flags=lanczos,zoompan=z='1+0.10*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${fps},format=yuv420p`;
+      await ffmpeg(["-loop", "1", "-framerate", String(fps), "-t", segDur.toFixed(3), "-i", visuals[i].path, "-vf", zoom, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
+    }
+    console.log(`  [edit] seg ${meta[i].name} ${segDur.toFixed(1)}s done (${visuals[i].kind})`);
     segs.push(seg);
   }
 
@@ -249,7 +301,7 @@ async function edit(item) {
   const total = await ffprobeDur(out);
   return {
     video: url,
-    note: `粗剪 ${total.toFixed(1)}s,${cards.length} 拍${bgmFile ? "(带 BGM 垫底)" : "(无 BGM)"}。节奏/画面对位请审。`,
+    note: `粗剪 ${total.toFixed(1)}s,${visuals.length} 拍${bgmFile ? "(带 BGM 垫底)" : "(无 BGM)"}。节奏/画面对位请审。`,
   };
 }
 
