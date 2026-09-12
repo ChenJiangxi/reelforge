@@ -64,7 +64,7 @@ export function ChatPanel({
   }
 
   return (
-    <div className="flex h-[70vh] flex-col rounded-lg border border-border bg-card shadow-xs lg:h-auto">
+    <div className="flex h-full min-h-[60vh] flex-col rounded-lg border border-border bg-card shadow-xs">
       <div className="border-b border-border px-4 py-3">
         <div className="text-sm font-semibold">对话剪辑</div>
         <div className="mt-0.5 text-xs text-muted-foreground">

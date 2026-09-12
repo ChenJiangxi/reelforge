@@ -28,6 +28,7 @@ export function stageLabel(k: string): string {
 export type Artifacts = {
   video?: string;
   audio?: string;
+  wave?: string;
   script?: string;
   cover?: string;
   note?: string;

@@ -106,7 +106,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           />
         </div>
         <div className="order-1 lg:order-2">
-          <PreviewPane video={video} clips={clips} aspect={project.aspect} />
+          <PreviewPane video={video} clips={clips} aspect={project.aspect} audio={voice.audio} wave={voice.wave} />
         </div>
       </div>
 

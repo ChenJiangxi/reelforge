@@ -153,9 +153,14 @@ async function voice(item) {
   const concat = meta.map((_, i) => `[a${i}]`).join("") + `concat=n=${meta.length}:v=0:a=1[a]`;
   await ffmpeg([...inputs, "-filter_complex", filters + ";" + concat, "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "4", preview]);
   const { url } = await upload(item.projectId, preview, "voice-preview.mp3");
+  // waveform image for the editor's audio track (like an NLE timeline)
+  const wave = join(dir, "voice-wave.png");
+  await ffmpeg(["-i", preview, "-filter_complex", "showwavespic=s=1800x140:colors=#e8622c", "-frames:v", "1", wave]);
+  const { url: waveUrl } = await upload(item.projectId, wave, "voice-wave.png");
   const total = meta.reduce((n, m) => n + m.dur, 0);
   return {
     audio: url,
+    wave: waveUrl,
     voiceMeta: { clips: meta.map(({ name, text, dur }) => ({ name, text, dur })), gap: GAP },
     note: `音色 ${profile.voice_id} @${profile.speed}x,共 ${total.toFixed(1)}s(${meta.length} 句)。配音够不够激情、地不地道,请审听。`,
   };

@@ -10,10 +10,14 @@ export function PreviewPane({
   video,
   clips,
   aspect,
+  audio,
+  wave,
 }: {
   video?: string;
   clips: ClipThumb[];
   aspect: string;
+  audio?: string;
+  wave?: string;
 }) {
   const [inspect, setInspect] = useState<ClipThumb | null>(null);
   const vertical = aspect !== "16:9";
@@ -70,31 +74,55 @@ export function PreviewPane({
         )}
       </div>
 
-      {clips.some((c) => c.image) && (
-        <div className="border-t border-border p-3">
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {clips.map((c, i) => (
+      {(clips.some((c) => c.image) || wave) && (
+        <div className="space-y-2 border-t border-border p-3">
+          {/* 画面轨 */}
+          {clips.some((c) => c.image) && (
+            <div className="flex items-stretch gap-2">
+              <div className="flex w-10 shrink-0 flex-col items-center justify-center rounded bg-muted font-mono text-[10px] text-muted-foreground">
+                画面
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {clips.map((c, i) => (
+                  <button
+                    key={c.name}
+                    onClick={() => setInspect(c)}
+                    className={`group relative shrink-0 overflow-hidden rounded-md border text-left ${
+                      inspect?.name === c.name ? "border-accent" : "border-border hover:border-foreground/30"
+                    }`}
+                    title={c.text}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={c.image} alt={c.name} className={`w-auto object-cover ${vertical ? "h-24" : "h-20"}`} />
+                    <span className="absolute left-1 top-1 rounded bg-black/65 px-1 font-mono text-[10px] text-white">
+                      {i + 1}
+                    </span>
+                    {c.dur != null && (
+                      <span className="absolute bottom-1 right-1 rounded bg-black/65 px-1 font-mono text-[10px] text-white">
+                        {c.dur.toFixed(1)}s
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* 配音轨 */}
+          {wave && (
+            <div className="flex items-center gap-2">
+              <div className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded bg-muted font-mono text-[10px] text-muted-foreground">
+                配音
+              </div>
               <button
-                key={c.name}
-                onClick={() => setInspect(c)}
-                className={`group relative shrink-0 overflow-hidden rounded-md border text-left ${
-                  inspect?.name === c.name ? "border-accent" : "border-border hover:border-foreground/30"
-                }`}
-                title={c.text}
+                onClick={() => audio && new Audio(audio).play()}
+                className="relative h-10 min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-muted/60 text-left"
+                title="点击播放配音"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={c.image} alt={c.name} className={`w-auto object-cover ${vertical ? "h-24" : "h-20"}`} />
-                <span className="absolute left-1 top-1 rounded bg-black/65 px-1 font-mono text-[10px] text-white">
-                  {i + 1}
-                </span>
-                {c.dur != null && (
-                  <span className="absolute bottom-1 right-1 rounded bg-black/65 px-1 font-mono text-[10px] text-white">
-                    {c.dur.toFixed(1)}s
-                  </span>
-                )}
+                <img src={wave} alt="配音波形" className="h-full w-full object-fill opacity-90" />
               </button>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
     </div>
