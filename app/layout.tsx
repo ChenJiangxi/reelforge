@@ -35,8 +35,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           {authed && <ProjectNav projects={projects} />}
         </header>
         <div className="flex min-h-screen">
-          <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border bg-card p-6 md:flex">
-            <Link href="/" className="mb-8 text-lg font-bold tracking-tight">
+          <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-border bg-card p-5 md:flex">
+            <Link href="/" className="mb-6 text-lg font-bold tracking-tight">
               reel<span className="text-accent">forge</span>
             </Link>
             <div className="section-label mb-2 px-2">工作台</div>
@@ -59,7 +59,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               你在关键点审
             </div>
           </aside>
-          <main className="min-w-0 flex-1 p-5 md:p-10">{children}</main>
+          <main className="min-w-0 flex-1 p-4 md:p-6">{children}</main>
         </div>
       </body>
     </html>

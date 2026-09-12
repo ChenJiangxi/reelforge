@@ -67,18 +67,18 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     }));
 
   return (
-    <div className="max-w-6xl">
+    <div className="project-shell max-w-6xl">
       <a href="/" className="text-sm text-muted-foreground hover:text-foreground">
         ← 全部项目
       </a>
-      <div className="mt-3 mb-2 flex flex-wrap items-center gap-3">
+      <div className="mt-2 mb-1.5 flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">{project.title}</h1>
         <StatusBadge status={project.status} />
       </div>
-      <p className="mb-3 text-[15px] text-muted-foreground">{project.topic}</p>
-      <div className="mb-6 flex flex-wrap gap-2">
+      <p className="mb-2 text-sm text-muted-foreground">{project.topic}</p>
+      <div className="mb-4 flex flex-wrap gap-1.5">
         {settings.map((s) => (
-          <span key={s} className="rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
+          <span key={s} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
             {s}
           </span>
         ))}

@@ -14,7 +14,7 @@ export default async function Home() {
 
   return (
     <div className="max-w-5xl">
-      <div className="relative mb-8 flex items-end justify-between">
+      <div className="relative mb-6 flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">项目</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -37,7 +37,7 @@ export default async function Home() {
             <Link
               key={p.id}
               href={`/project/${p.id}`}
-              className="group rounded-lg border border-border bg-card p-5 shadow-xs hover:border-foreground/20"
+              className="group rounded-lg border border-border bg-card p-4 shadow-xs hover:border-foreground/20"
             >
               <div className="mb-2 flex items-center gap-2">
                 <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
@@ -45,7 +45,7 @@ export default async function Home() {
                 </span>
                 <StatusBadge status={p.status} />
               </div>
-              <div className="mb-4 text-[15px] font-medium leading-snug">{p.title}</div>
+              <div className="mb-3 text-sm font-medium leading-snug">{p.title}</div>
               {/* pipeline progress */}
               <div className="mb-2.5 h-1 overflow-hidden rounded-full bg-muted">
                 <div

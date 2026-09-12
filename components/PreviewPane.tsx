@@ -44,7 +44,7 @@ export function PreviewPane({
     stages.find((s) => s.id === selectedId) ?? awaiting ?? withVideo ?? working ?? stages[0] ?? null;
   const isAwaiting = view?.status === "awaiting_review";
   const showingCut = view != null && withVideo != null && view.id === withVideo.id;
-  const showTracks = showingCut || (view && ["edit", "subtitles", "polish"].includes(view.kind));
+  const showTracks = !!view?.artifacts.video && ["edit", "subtitles", "polish"].includes(view.kind);
 
   if (!view) {
     return (
@@ -56,8 +56,8 @@ export function PreviewPane({
 
   return (
     <div className="flex h-full flex-col rounded-lg border border-border bg-card shadow-xs">
-      <div className="flex items-center justify-between border-b border-border px-5 py-4">
-        <span className="text-[15px] font-semibold">{stageLabel(view.kind)}</span>
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <span className="text-sm font-semibold">{stageLabel(view.kind)}</span>
         <div className="flex items-center gap-2">
           {isAwaiting && (
             <span className="inline-flex items-center gap-1.5 text-xs font-medium text-accent">
@@ -82,7 +82,7 @@ export function PreviewPane({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-muted/50 p-6">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-muted/50 p-4">
         <StageArtifact stage={view} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} />
       </div>
 
@@ -145,7 +145,7 @@ function StageArtifact({
   let body: React.ReactNode = null;
   if (stage.kind === "topic") {
     body = (
-      <pre className="mx-auto max-w-2xl whitespace-pre-wrap rounded-lg bg-card p-8 text-[15px] leading-[1.9] text-foreground/85">
+      <pre className="mx-auto max-w-2xl whitespace-pre-wrap rounded-lg bg-card p-6 text-sm leading-[1.8] text-foreground/85">
         {a.note}
       </pre>
     );
@@ -162,7 +162,7 @@ function StageArtifact({
     );
   } else if (stage.kind === "voice") {
     body = (
-      <div className="mx-auto flex max-w-2xl flex-col items-center gap-5 rounded-lg bg-card p-8">
+      <div className="mx-auto flex max-w-2xl flex-col items-center gap-4 rounded-lg bg-card p-5">
         {(a.wave || wave) && (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={a.wave ?? wave} alt="波形" className="w-full rounded border border-border" />
@@ -187,10 +187,10 @@ function StageArtifact({
       <div className="mx-auto flex max-w-2xl flex-wrap items-start justify-center gap-4">
         {a.cover && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={a.cover} alt="封面" className="w-52 rounded-lg border border-border" />
+          <img src={a.cover} alt="封面" className="w-44 rounded-md border border-border" />
         )}
         {a.caption && (
-          <div className="min-w-56 flex-1 rounded-lg bg-card p-5 text-[15px]">
+          <div className="min-w-56 flex-1 rounded-md bg-card p-4 text-sm">
             <div className="font-medium">{a.caption.title}</div>
             <div className="mt-1 text-accent">{a.caption.hashtags.join(" ")}</div>
             <div className="mt-1 text-muted-foreground">{a.caption.desc}</div>
@@ -244,7 +244,7 @@ function ScriptEditor({ stage, projectId }: { stage: StageView; projectId: strin
   if (!editing) {
     return (
       <div className="group relative mx-auto max-w-2xl">
-        <pre className="whitespace-pre-wrap rounded-lg bg-card p-8 text-[15px] leading-[1.9] text-foreground/85">
+        <pre className="whitespace-pre-wrap rounded-lg bg-card p-6 text-sm leading-[1.8] text-foreground/85">
           {text}
         </pre>
         <button
@@ -267,7 +267,7 @@ function ScriptEditor({ stage, projectId }: { stage: StageView; projectId: strin
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         rows={Math.min(24, Math.max(10, draft.split("\n").length + 2))}
-        className="w-full resize-none rounded-lg border border-accent/50 bg-card p-6 text-[15px] leading-[1.9] outline-none focus:border-accent"
+        className="w-full resize-none rounded-lg border border-accent/50 bg-card p-5 text-sm leading-[1.8] outline-none focus:border-accent"
       />
       <div className="mt-2 flex items-center gap-2">
         <button
@@ -304,10 +304,10 @@ function Tracks({
   onSelect?: undefined;
 }) {
   return (
-    <div className="space-y-2.5 border-t border-border p-4">
+    <div className="space-y-2 border-t border-border p-3">
       {clips.some((c) => c.image) && (
         <div className="flex items-stretch gap-2">
-          <div className="flex w-12 shrink-0 flex-col items-center justify-center rounded bg-muted font-mono text-xs text-muted-foreground">
+          <div className="flex w-10 shrink-0 flex-col items-center justify-center rounded bg-muted font-mono text-[10px] text-muted-foreground">
             画面
           </div>
           <div className="flex gap-2 overflow-x-auto pb-1">
@@ -318,7 +318,7 @@ function Tracks({
                 title={c.text}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={c.image} alt={c.name} className={`w-auto object-cover ${vertical ? "h-28" : "h-24"}`} />
+                <img src={c.image} alt={c.name} className={`w-auto object-cover ${vertical ? "h-24" : "h-20"}`} />
                 <span className="absolute left-1 top-1 rounded bg-black/65 px-1 font-mono text-[10px] text-white">
                   {i + 1}
                 </span>
@@ -334,12 +334,12 @@ function Tracks({
       )}
       {wave && (
         <div className="flex items-center gap-2">
-          <div className="flex h-10 w-12 shrink-0 flex-col items-center justify-center rounded bg-muted font-mono text-xs text-muted-foreground">
+          <div className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded bg-muted font-mono text-[10px] text-muted-foreground">
             配音
           </div>
           <button
             onClick={() => audio && new Audio(audio).play()}
-            className="relative h-12 min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-muted/60 text-left"
+            className="relative h-10 min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-muted/60 text-left"
             title="点击播放配音"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -378,7 +378,7 @@ function GateBar({ stageId, onDone }: { stageId: string; onDone: () => void }) {
   }
 
   return (
-    <div className="border-t border-accent/25 bg-accent-soft/50 p-4">
+    <div className="border-t border-accent/25 bg-accent-soft/50 p-3">
       {rejecting && (
         <div className="mb-2">
           <textarea
@@ -396,7 +396,7 @@ function GateBar({ stageId, onDone }: { stageId: string; onDone: () => void }) {
         <button
           disabled={busy}
           onClick={() => resolve("approve")}
-          className="rounded-full bg-foreground px-6 py-2.5 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
+          className="rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
         >
           通过,继续往下
         </button>
@@ -404,7 +404,7 @@ function GateBar({ stageId, onDone }: { stageId: string; onDone: () => void }) {
           <button
             disabled={busy}
             onClick={() => setRejecting(true)}
-            className="rounded-full bg-destructive/10 px-5 py-2.5 text-sm text-destructive hover:bg-destructive/15 disabled:opacity-40"
+            className="rounded-full bg-destructive/10 px-4 py-2 text-sm text-destructive hover:bg-destructive/15 disabled:opacity-40"
           >
             打回
           </button>
@@ -413,7 +413,7 @@ function GateBar({ stageId, onDone }: { stageId: string; onDone: () => void }) {
             <button
               disabled={busy}
               onClick={() => resolve("reject")}
-              className="rounded-full bg-destructive px-5 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+              className="rounded-full bg-destructive px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
             >
               确认打回
             </button>
@@ -423,7 +423,7 @@ function GateBar({ stageId, onDone }: { stageId: string; onDone: () => void }) {
                 setNote("");
                 setErr("");
               }}
-              className="rounded-full px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground"
+              className="rounded-full px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
             >
               算了
             </button>
