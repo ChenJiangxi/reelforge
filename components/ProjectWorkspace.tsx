@@ -86,6 +86,7 @@ export function ProjectWorkspace({
             wave={wave}
             selectedId={selectedId}
             onSelect={setSelectedId}
+            projectId={projectId}
           />
         </div>
       </div>

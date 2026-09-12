@@ -24,6 +24,7 @@ export function PreviewPane({
   wave,
   selectedId,
   onSelect,
+  projectId,
 }: {
   stages: StageView[];
   clips: ClipThumb[];
@@ -32,6 +33,7 @@ export function PreviewPane({
   wave?: string;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  projectId: string;
 }) {
   const vertical = aspect !== "16:9";
   const awaiting = stages.find((s) => s.status === "awaiting_review");
@@ -81,7 +83,7 @@ export function PreviewPane({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-muted/50 p-4">
-        <StageArtifact stage={view} vertical={vertical} clips={clips} audio={audio} wave={wave} />
+        <StageArtifact stage={view} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} />
       </div>
 
       {showTracks && (
@@ -101,12 +103,14 @@ function StageArtifact({
   clips,
   audio,
   wave,
+  projectId,
 }: {
   stage: StageView;
   vertical: boolean;
   clips: ClipThumb[];
   audio?: string;
   wave?: string;
+  projectId: string;
 }) {
   const a = stage.artifacts;
 
@@ -139,12 +143,14 @@ function StageArtifact({
   );
 
   let body: React.ReactNode = null;
-  if (stage.kind === "topic" || stage.kind === "script") {
+  if (stage.kind === "topic") {
     body = (
       <pre className="mx-auto max-w-2xl whitespace-pre-wrap rounded-md bg-card p-5 text-sm leading-relaxed text-foreground/85">
-        {a.script || a.note}
+        {a.note}
       </pre>
     );
+  } else if (stage.kind === "script") {
+    body = <ScriptEditor stage={stage} projectId={projectId} />;
   } else if (stage.kind === "footage" && a.images?.length) {
     body = (
       <div className="mx-auto grid max-w-3xl grid-cols-2 gap-2 sm:grid-cols-3">
@@ -208,6 +214,78 @@ function StageArtifact({
       )}
       {commentsBlock}
     </>
+  );
+}
+
+// ── 脚本就地编辑:改文字就剪视频。编辑即通过(她的版本就是定稿)。──
+
+function ScriptEditor({ stage, projectId }: { stage: StageView; projectId: string }) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const text = stage.artifacts.script || stage.artifacts.note || "";
+
+  async function save() {
+    if (!draft.trim() || busy) return;
+    setBusy(true);
+    const r = await fetch(`/api/project/${projectId}/script`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ narration: draft }),
+    });
+    setBusy(false);
+    if (r.ok) {
+      setEditing(false);
+      router.refresh();
+    }
+  }
+
+  if (!editing) {
+    return (
+      <div className="group relative mx-auto max-w-2xl">
+        <pre className="whitespace-pre-wrap rounded-md bg-card p-5 text-sm leading-relaxed text-foreground/85">
+          {text}
+        </pre>
+        <button
+          onClick={() => {
+            setDraft(text);
+            setEditing(true);
+          }}
+          className="absolute right-3 top-3 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground opacity-0 shadow-xs transition group-hover:opacity-100 hover:border-foreground/30 hover:text-foreground"
+        >
+          ✎ 直接改
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-2xl">
+      <textarea
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        rows={Math.min(24, Math.max(10, draft.split("\n").length + 2))}
+        className="w-full resize-none rounded-md border border-accent/50 bg-card p-5 text-sm leading-relaxed outline-none focus:border-accent"
+      />
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          onClick={save}
+          disabled={busy || !draft.trim()}
+          className="rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
+        >
+          {busy ? "定稿中…" : "存稿,重出下游"}
+        </button>
+        <button
+          onClick={() => setEditing(false)}
+          className="rounded-full px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          取消
+        </button>
+        <span className="ml-auto text-xs text-muted-foreground">你的版本就是定稿,配音/画面/剪辑自动跟着重出</span>
+      </div>
+    </div>
   );
 }
 
