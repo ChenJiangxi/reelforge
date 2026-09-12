@@ -35,43 +35,88 @@ export const PROMPTS = {
   script: (item, topic) => [
     {
       role: "system",
-      content: `你是口播视频编剧,写第一人称口播稿。\n${TASTE}\n分句要求:每句是一个独立镜头(clip),一句话一个画面。句子短,口语化,适合配音念出来。`,
+      content: `你是短视频口播编剧。写的是一篇"能一口气念下来"的稿子,不是金句清单。
+${TASTE}
+
+叙事结构(60-90秒口播的标准弧线,按此推进):
+1. hook 钩子:第一句制造矛盾/反问/反差(三种轮换着用,别只会甩数字)。3秒内让人停下来。
+2. context 展开:钩子之后给必要的背景——为什么会这样?一两句就够,别铺垫。
+3. evidence 证据:具体的人、事、数字(只用真实值)。这是肉。
+4. turn 转折:"但真正的重点是……"——把前面说的重新定义一次。全片最需要判断力的地方。
+5. landing 落点:所以对观众意味着什么?一句有立场的结论,不是空洞升华。
+
+句间连贯(这次的重点,必须做到):
+- 每句话必须承接上一句:用"但/所以/结果呢/换句话说/你可能会想/这意味着/更关键的是"这类承接,或者明确的指代("这套逻辑""它们""这事儿")。
+- 禁止清单体:不许每句一个独立观点、句与句之间可以任意调换顺序。稿子的句子是有先后的,挪了就讲不通,这才叫有逻辑。
+- 长短句混排:两三句短的砸一个节奏点,跟一句长的把逻辑说透。不许每句一样长。
+- 连接词别每句都用同一个;"首先/其次/最后"禁用。
+
+画面按节拍走:一个节拍(beat)= 一个完整意思,1-3 句话,8-15 秒。不是一句话一个画面。`,
     },
     {
       role: "user",
       content: `选题角度:${topic.angle}
-开场钩子:${topic.hook}
+开场钩子方向:${topic.hook}
 要讲的判断:${(topic.claims || []).join(" / ")}
 绝不能吹:${(topic.avoid || []).join(" / ")}
 配音语言:${item.voice === "minimax-en" ? "英文(地道、有激情的旁白)" : "中文(第一人称)"}
-目标时长 ~${item.duration} 秒(中文约 4.7 字/秒,英文约 2.5 词/秒,按此控制总长度)。
+目标时长 ~${item.duration} 秒(中文 4.7 字/秒,总字数 = 时长×4.7 ±15%,大约 ${Math.round(item.duration * 4.7 * 0.85)}-${Math.round(item.duration * 4.7 * 1.15)} 字)。
 
-写完整口播稿,返回 JSON:
+返回 JSON(不要多余文字):
 {
+  "narration": "完整口播稿全文(连贯的一篇,分段)",
   "clips": [
-    {"name": "c01", "text": "这句台词(开场第一句必须用钩子)", "visual": "这句对应的画面内容,具体到元素(如:大字卡\"25分\",柱状图对比,手机录屏界面)"}
+    {
+      "name": "c01",
+      "beat": "hook|context|evidence|turn|landing 之一",
+      "text": "这个节拍的口播(1-3句完整的话)",
+      "visual_type": "text|data|quote|contrast|step 之一",
+      "visual": "画面简报:这拍卡上要出现什么具体内容"
+    }
   ]
 }
-clip 数量 7-12 个。name 用 c01..cNN。visual 是给画面生成用的简报,要具体。`,
+clips 5-7 个,全片覆盖 hook→landing 完整弧线。text 加起来就是 narration,不许缺段。visual_type:观点/金句用 quote,数字对比用 data,两方对照用 contrast,流程步骤用 step,其余 text。`,
+    },
+  ],
+
+  scriptCritique: (item, draft) => [
+    {
+      role: "system",
+      content: `你是毒舌但专业的短视频主编。审一篇口播稿,只挑真毛病,按清单过:
+1. 连贯性:逐句读,每句是否真的承接上一句?标出"可以任意调换顺序"的句子——那是清单体,必须改。
+2. 人味:有没有 AI 腔(排比堆砌、空洞升华、"让我们一起"、每句一样长、书面语)?改成口语。
+3. 钩子:第一句 3 秒内能不能让人停下来?不行就换。
+4. 真实:数字/案例是不是具体可信?含糊的("很多人""越来越多")改成具体说法或删掉。
+5. 完整:每拍的话是不是完整的意思(不是半句)?全片是否覆盖了 hook→landing 弧线?`,
+    },
+    {
+      role: "user",
+      content: `这是初稿(JSON):
+${JSON.stringify(draft, null, 1)}
+
+按清单改完,返回同样结构的完整 JSON(narration + clips)。没毛病的地方别动。目标时长 ~${item.duration} 秒(4.7 字/秒)。`,
     },
   ],
 
   card: (item, clip, i, n) => [
     {
       role: "system",
-      content: `你是短视频画面设计,把一句台词设计成一张大字卡的内容。\n${TASTE}\n卡片语言:${item.voice === "minimax-en" ? "英文" : "中文"}。`,
+      content: `你是短视频画面设计,把一节口播设计成一张卡的内容。\n${TASTE}\n卡片语言:${item.voice === "minimax-en" ? "英文" : "中文"}。`,
     },
     {
       role: "user",
-      content: `第 ${i + 1}/${n} 句台词:"${clip.text}"
+      content: `第 ${i + 1}/${n} 拍(${clip.beat || "?"},视觉类型:${clip.visual_type || "text"}):
+口播:"${clip.text}"
 画面简报:${clip.visual || "(无,自行设计)"}
 
 设计这张卡的内容,返回 JSON:
 {
-  "type": "text 或 data(台词里有具体数字/对比时用 data)",
+  "type": "${clip.visual_type === "data" ? "data" : clip.visual_type === "contrast" ? "contrast" : clip.visual_type === "step" ? "step" : clip.visual_type === "quote" ? "quote" : "text"}",
   "kicker": "顶部小字(≤12字,可空字符串)",
-  "big": "主视觉大字(≤10字,越短越有冲击力;data 卡这里是数字本体,如\"34分\"\"37-50\")",
+  "big": "主视觉大字(≤10字;data 卡=数字本体;quote 卡=金句核心;contrast 卡=对比左方,如\"以为的样子\";step 卡=这一步的动作,≤6字)",
   "sub": "大字下面一行解释(≤20字,可空)",
+  "big2": "仅 contrast 卡用:对比右方(如\"实际的样子\"),没有则空字符串",
+  "step_no": "仅 step 卡用:第几步的数字,没有则空字符串",
   "foot": "底部一行小字备注(≤16字,通常空)"
 }`,
     },

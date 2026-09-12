@@ -88,15 +88,20 @@ async function topic(item) {
 async function script(item) {
   const t = item.upstream?.topic?.topic;
   if (!t) throw new Error("上游选题没有结构化数据(topic.topic 缺失)");
-  const out = await chatJSON(guided(item, PROMPTS.script(item, t)), { temperature: 0.7, maxTokens: 6000 });
+  // Two passes: draft the coherent narration, then a chief-editor critique.
+  // Learned from MuseDock: narration is one flowing piece (hook→landing),
+  // segmented into beats of 1-3 sentences — never a list of one-liners.
+  const draft = await chatJSON(guided(item, PROMPTS.script(item, t)), { temperature: 0.75, maxTokens: 6000 });
+  const out = await chatJSON(PROMPTS.scriptCritique(item, draft), { temperature: 0.5, maxTokens: 6000 });
   if (!Array.isArray(out.clips) || out.clips.length < 3) throw new Error("脚本 clips 太少或格式错误");
   out.clips.forEach((c, i) => { c.name = `c${String(i + 1).padStart(2, "0")}`; });
-  const text = out.clips.map((c) => c.text).join("\n");
+  const narration = out.narration || out.clips.map((c) => c.text).join("\n");
   const chars = out.clips.reduce((n, c) => n + c.text.length, 0);
+  const arc = out.clips.map((c) => c.beat).filter(Boolean).join("→");
   return {
-    script: text,
+    script: narration,
     clips: out.clips,
-    note: `共 ${out.clips.length} 句,约 ${chars} 字(目标 ~${item.duration}s)。`,
+    note: `${out.clips.length} 拍(${arc || "无节拍标注"}),约 ${chars} 字(目标 ~${item.duration}s)。连贯性/人味已经过一遍主编审稿。`,
   };
 }
 
