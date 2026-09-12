@@ -3,6 +3,27 @@ import { prisma } from "@/lib/db";
 import { parseChat, applyOps, type Clip, type ChatOp } from "@/lib/chat-ops";
 import { STAGE_ORDER } from "@/lib/stages";
 
+// Never trust the LLM's stage name — map by what the instruction is ABOUT.
+// Note text wins over the raw kind ("封面" → deliver even if it said "topic").
+const KIND_RULES: [RegExp, string][] = [
+  [/封面|文案|发布|话题|hashtag|打包|下载|cover|caption/i, "deliver"],
+  [/字幕|subtitle/i, "subtitles"],
+  [/剪辑|节奏|剪接|edit/i, "edit"],
+  [/配音|音色|声音|语速|旁白|voice/i, "voice"],
+  [/素材|画面|字卡|卡片|footage|card/i, "footage"],
+  [/脚本|台词|口播稿|script/i, "script"],
+  [/选题|角度|钩子|topic/i, "topic"],
+];
+
+function normalizeKind(kind: unknown, note: unknown): string | null {
+  const hay = `${note ?? ""} ${kind ?? ""}`;
+  for (const [re, target] of KIND_RULES) {
+    if (re.test(hay)) return target;
+  }
+  const k = String(kind ?? "").toLowerCase();
+  return (STAGE_ORDER as readonly string[]).includes(k) ? k : null;
+}
+
 // POST /api/project/[id]/chat { text } — the 对话剪辑 endpoint.
 // DeepSeek parses her message into clip ops; we apply them to the script's
 // clip list and reset the affected downstream stages so the worker
@@ -68,7 +89,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // ── whole-stage redos (cover, caption, voice style…) — reuse the reject machinery ──
   for (const op of redoOps) {
-    const stage = project.stages.find((s) => s.kind === op.kind);
+    const kind = normalizeKind(op.kind, op.note);
+    if (!kind) continue; // can't tell what she means → skip, reply already covers it
+    const stage = project.stages.find((s) => s.kind === kind);
     if (!stage) continue;
     const comments = stage.comments ? JSON.parse(stage.comments) : [];
     comments.push({ ts: Date.now(), text: op.note || String(text).trim(), decision: "reject" });
