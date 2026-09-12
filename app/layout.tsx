@@ -1,42 +1,53 @@
 import "./globals.css";
 import Link from "next/link";
 import type { Metadata } from "next";
+import { prisma } from "@/lib/db";
+import { isAuthed } from "@/lib/auth";
+import { ProjectNav } from "@/components/ProjectNav";
 
 export const metadata: Metadata = {
   title: "reelforge",
   description: "内容生产工作台 · agent 干活，你监管",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export const dynamic = "force-dynamic";
+
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const authed = await isAuthed();
+  const projects = authed
+    ? await prisma.project.findMany({
+        orderBy: { updatedAt: "desc" },
+        take: 50,
+        select: { id: true, title: true, status: true },
+      })
+    : [];
+
   return (
     <html lang="zh">
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         {/* mobile top bar */}
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-card/90 px-4 py-3 backdrop-blur md:hidden">
-          <Link href="/" className="text-[15px] font-bold tracking-tight">
+        <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-border bg-card/90 px-4 py-3 backdrop-blur md:hidden">
+          <Link href="/" className="shrink-0 text-[15px] font-bold tracking-tight">
             reel<span className="text-accent">forge</span>
           </Link>
-          <nav className="flex items-center gap-4 text-sm text-muted-foreground">
-            <Link href="/" className="text-foreground">
-              项目
-            </Link>
-          </nav>
+          {authed && <ProjectNav projects={projects} />}
         </header>
         <div className="flex min-h-screen">
-          <aside className="hidden w-56 shrink-0 flex-col border-r border-border bg-card p-5 md:flex">
-            <Link href="/" className="mb-8 text-[17px] font-bold tracking-tight">
+          <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-border bg-card p-5 md:flex">
+            <Link href="/" className="mb-6 text-[17px] font-bold tracking-tight">
               reel<span className="text-accent">forge</span>
             </Link>
             <div className="section-label mb-2 px-2">工作台</div>
             <nav className="space-y-0.5 text-sm">
               <Link href="/" className="block rounded-md bg-muted px-3 py-2 font-medium">
-                项目
+                全部项目
               </Link>
               <div className="block cursor-default rounded-md px-3 py-2 text-muted-foreground/60">
                 数据反馈<span className="ml-1.5 text-[10px]">soon</span>
               </div>
             </nav>
-            <div className="mt-auto text-xs leading-relaxed text-muted-foreground">
+            {authed && <ProjectNav projects={projects} />}
+            <div className="mt-4 text-xs leading-relaxed text-muted-foreground">
               抖音优先 · agent 干活
               <br />
               你在关键点审
