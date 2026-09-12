@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { prisma } from "@/lib/db";
 import { isAuthed } from "@/lib/auth";
 import { ProjectNav } from "@/components/ProjectNav";
+import { LiveRefresh } from "@/components/LiveRefresh";
 
 export const metadata: Metadata = {
   title: "reelforge",
@@ -25,6 +26,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="zh">
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
+        {authed && <LiveRefresh />}
         {/* mobile top bar */}
         <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-border bg-card/90 px-4 py-3 backdrop-blur md:hidden">
           <Link href="/" className="shrink-0 text-[15px] font-bold tracking-tight">
@@ -48,6 +50,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </nav>
             {authed && <ProjectNav projects={projects} />}
             <div className="mt-4 text-xs leading-relaxed text-muted-foreground">
+              <span className="mb-1 flex items-center gap-1.5 text-[11px] text-success">
+                <span className="inline-block size-1.5 animate-pulse rounded-full bg-success" />
+                实时 · 10s 自动刷新
+              </span>
               抖音优先 · agent 干活
               <br />
               你在关键点审

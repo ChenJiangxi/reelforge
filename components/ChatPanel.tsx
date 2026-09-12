@@ -24,12 +24,7 @@ export function ChatPanel({
   const [pending, setPending] = useState<ChatMessage[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const t = setInterval(() => {
-      if (document.visibilityState === "visible") router.refresh();
-    }, 12000);
-    return () => clearInterval(t);
-  }, [router]);
+  // (page-wide freshness comes from <LiveRefresh /> in the layout)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
