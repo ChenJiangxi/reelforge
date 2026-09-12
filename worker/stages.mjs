@@ -111,7 +111,7 @@ async function footage(item) {
   const dir = workDir(item, "cards");
   const size = sizeFor(item.aspect);
   // Reuse card designs from a previous pass for clips whose text is unchanged —
-  // chat edits usually touch one line; regenerating all 12 designs is waste.
+  // chat edits usually touch one line; regenerating all designs is waste.
   const prevByName = new Map(
     (item.artifacts?.cards || []).map((c) => [c.name, c]),
   );
@@ -123,11 +123,14 @@ async function footage(item) {
     let content;
     if (prev && !item.reviewNote && prev.text === clip.text && prev.big) {
       content = { type: prev.type, kicker: prev.kicker, big: prev.big, sub: prev.sub, foot: prev.foot };
+      console.log(`  [footage] ${clip.name} reuse design`);
     } else {
+      console.log(`  [footage] ${clip.name} designing…`);
       content = await chatJSON(guided(item, PROMPTS.card(item, clip, i, clips.length)), { temperature: 0.6 });
     }
     const png = join(dir, `${clip.name}.png`);
     await renderCard(content, size, png);
+    console.log(`  [footage] ${clip.name} rendered, uploading`);
     const { url } = await upload(item.projectId, png, `card-${clip.name}.png`);
     images.push(url);
     cards.push({ name: clip.name, text: clip.text, ...content });
@@ -143,6 +146,7 @@ async function voice(item) {
   const profile = VOICES[item.voice] || VOICES["clone-zh"];
   const meta = [];
   for (const c of clips) {
+    console.log(`  [voice] ${c.name} tts…`);
     const { path: p, dur } = await voiceClip(item, c, dir);
     meta.push({ name: c.name, text: c.text, dur, file: p });
   }
@@ -204,6 +208,7 @@ async function edit(item) {
     const seg = join(dir, `seg-${meta[i].name}.mp4`);
     const zoom = `scale=${W * 2}:${H * 2}:flags=lanczos,zoompan=z='1+0.10*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${fps},format=yuv420p`;
     await ffmpeg(["-loop", "1", "-framerate", String(fps), "-t", segDur.toFixed(3), "-i", cards[i], "-vf", zoom, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
+    console.log(`  [edit] seg ${meta[i].name} ${segDur.toFixed(1)}s done`);
     segs.push(seg);
   }
 
@@ -234,6 +239,7 @@ async function edit(item) {
     await ffmpeg(["-i", videoOnly, "-i", voiceM4a, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-shortest", out]);
   }
 
+  console.log("  [edit] uploading edit.mp4…");
   const { url } = await upload(item.projectId, out, "edit.mp4");
   const total = await ffprobeDur(out);
   return {
@@ -301,6 +307,7 @@ async function subtitles(item) {
     .join(";");
   const out = join(dir, "subs.mp4");
   await ffmpeg(["-i", local, ...inputs, "-filter_complex", chain, "-map", "[vout]", "-map", "0:a", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "copy", out]);
+  console.log("  [subtitles] uploading subs.mp4…");
   const { url } = await upload(item.projectId, out, "subs.mp4");
   return { video: url, note: `字幕已烧录(${overlays.length} 行)。错字/断句/位置请审。` };
 }

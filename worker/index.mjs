@@ -12,7 +12,7 @@ import { STAGES } from "./stages.mjs";
 
 const POLL_MS = Number(process.env.POLL_MS || 15000);
 const MAX_CONC = Number(process.env.MAX_CONC || 1);
-const STAGE_TIMEOUT_MS = Number(process.env.STAGE_TIMEOUT_MS || 20 * 60 * 1000);
+const STAGE_TIMEOUT_MS = Number(process.env.STAGE_TIMEOUT_MS || 45 * 60 * 1000);
 
 const inflight = new Map(); // stageId -> startedAt
 

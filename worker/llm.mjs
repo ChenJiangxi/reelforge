@@ -5,16 +5,36 @@ const MODEL = process.env.LLM_MODEL || "deepseek/deepseek-v3.2";
 
 export async function chat(messages, { model = MODEL, temperature = 0.7, maxTokens = 4000 } = {}) {
   if (!KEY) throw new Error("OPENROUTER_API_KEY not in env");
-  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
-    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
-  });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`openrouter ${r.status}: ${JSON.stringify(j).slice(0, 300)}`);
-  const text = j.choices?.[0]?.message?.content;
-  if (!text) throw new Error(`openrouter empty response: ${JSON.stringify(j).slice(0, 300)}`);
-  return text;
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const ctrl = new AbortController();
+      const killer = setTimeout(() => ctrl.abort(), 120000); // a hung socket ate 20min once
+      let r;
+      try {
+        r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
+          body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
+          signal: ctrl.signal,
+        });
+      } finally {
+        clearTimeout(killer);
+      }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(`openrouter ${r.status}: ${JSON.stringify(j).slice(0, 300)}`);
+      const text = j.choices?.[0]?.message?.content;
+      if (!text) throw new Error(`openrouter empty response: ${JSON.stringify(j).slice(0, 300)}`);
+      return text;
+    } catch (e) {
+      lastErr = e;
+      const net = e.name === "AbortError" || e.message === "fetch failed";
+      console.log(`[llm] attempt ${attempt} failed: ${e.message?.slice(0, 120)}`);
+      if (!net || attempt === 3) break;
+      await new Promise((r) => setTimeout(r, 5000 * attempt));
+    }
+  }
+  throw lastErr;
 }
 
 // Ask for a JSON object back; tolerate code fences / surrounding prose.

@@ -63,7 +63,7 @@ export async function upload(projectId, absPath, name, attempt = 1) {
           "content-type": `multipart/form-data; boundary=${boundary}`,
           "content-length": head.length + buf.length + tail.length,
         },
-        timeout: 15 * 60 * 1000,
+        timeout: 8 * 60 * 1000, // 1MB 卡正常 20s;8min 只对真卡死兜底,别躺 15min
       },
       (res) => {
         let body = "";
