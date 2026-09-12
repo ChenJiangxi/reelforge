@@ -56,6 +56,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     }),
   );
   const awaiting = project.stages.find((s) => s.status === "awaiting_review");
+  const review: import("@/components/PreviewPane").ReviewTarget | null = awaiting
+    ? { stageId: awaiting.id, kind: awaiting.kind, artifacts: awaiting.artifacts ? JSON.parse(awaiting.artifacts) : {} }
+    : null;
 
   return (
     <div className="max-w-6xl">
@@ -99,21 +102,18 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       {/* editor: chat + preview */}
       <div className="editor-grid">
         <div className="order-2 lg:order-1">
-          <ChatPanel
-            projectId={project.id}
-            messages={project.messages.map((m) => ({ role: m.role, text: m.text, ts: m.createdAt.getTime() }))}
-            awaiting={awaiting ? { stageId: awaiting.id, kind: awaiting.kind } : null}
-          />
+          <ChatPanel projectId={project.id} messages={project.messages.map((m) => ({ role: m.role, text: m.text, ts: m.createdAt.getTime() }))} />
         </div>
         <div className="order-1 lg:order-2">
-          <PreviewPane video={video} clips={clips} aspect={project.aspect} audio={voice.audio} wave={voice.wave} />
+          <PreviewPane video={video} clips={clips} aspect={project.aspect} audio={voice.audio} wave={voice.wave} review={review} />
         </div>
       </div>
 
-      {/* stage details (gates live here) */}
+      {/* stage history (archived artifacts + comment trail) */}
       <details className="group rounded-lg border border-border bg-card/60 open:bg-transparent">
         <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground">
-          阶段详情与审核
+          阶段记录
+          <span className="ml-2 text-xs font-normal text-muted-foreground/60">产物历史与批注轨迹</span>
           <span className="ml-2 text-xs text-muted-foreground/60 group-open:hidden">展开 ↓</span>
           <span className="ml-2 hidden text-xs text-muted-foreground/60 group-open:inline">收起 ↑</span>
         </summary>

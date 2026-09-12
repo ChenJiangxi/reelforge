@@ -2,21 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { stageLabel } from "@/lib/stages";
 
 export type ChatMessage = { role: string; text: string; ts: number };
 
 // The 对话剪辑 panel: chat with the pipeline. Clip edits (改第N句/删句/加句/改画面)
-// and stage redos (封面换一版…) are parsed server-side; regeneration shows up
-// on refresh — so we poll lightly while the project is alive.
+// and stage redos (封面换一版…) are parsed server-side; the review gate lives
+// in the preview pane (审核模式), not here.
 export function ChatPanel({
   projectId,
   messages,
-  awaiting,
 }: {
   projectId: string;
   messages: ChatMessage[];
-  awaiting: { stageId: string; kind: string } | null;
 }) {
   const router = useRouter();
   const [text, setText] = useState("");
@@ -51,18 +48,6 @@ export function ChatPanel({
     setBusy(false);
   }
 
-  async function approve() {
-    if (!awaiting || busy) return;
-    setBusy(true);
-    await fetch("/api/stage/resolve", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ stageId: awaiting.stageId, decision: "approve" }),
-    });
-    setBusy(false);
-    router.refresh();
-  }
-
   return (
     <div className="flex h-full min-h-[60vh] flex-col rounded-lg border border-border bg-card shadow-xs">
       <div className="border-b border-border px-4 py-3">
@@ -71,19 +56,6 @@ export function ChatPanel({
           直接说:把第3句改成… / 删掉第5句 / 封面换一版
         </div>
       </div>
-
-      {awaiting && (
-        <div className="flex items-center justify-between gap-2 border-b border-accent/25 bg-accent-soft px-4 py-2.5">
-          <span className="text-xs font-medium text-accent">「{stageLabel(awaiting.kind)}」做完了,待你审</span>
-          <button
-            onClick={approve}
-            disabled={busy}
-            className="shrink-0 rounded-full bg-foreground px-3 py-1 text-xs font-medium text-background hover:opacity-85 disabled:opacity-40"
-          >
-            通过
-          </button>
-        </div>
-      )}
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
         {messages.length === 0 && pending.length === 0 && (
