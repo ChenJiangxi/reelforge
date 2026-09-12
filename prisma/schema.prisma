@@ -1,5 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // macOS (dev/worker) + Ubuntu 24.04 x64 (server, zero-install deploy)
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
