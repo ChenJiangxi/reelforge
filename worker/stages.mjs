@@ -174,7 +174,7 @@ async function footage(item) {
       if (!freshDesign) break;
       const qa = await reviewImage(
         png,
-        `审这张短视频字卡(口播:"${clip.text}")。清单:1)第一眼是否落在主信息大字上 2)文字有没有溢出/被裁切/挤出画面 3)底部 17% 字幕安全区有没有被占用 4)有没有错别字/多字漏字 5)卡内容和口播是否相关`,
+        `审这张短视频画面卡(口播:"${clip.text}")。清单:1)第一眼是否落在主信息上 2)文字有没有溢出/被裁切/挤出画面 3)底部 17% 字幕安全区有没有被占用 4)有没有错别字/多字漏字 5)卡内容和口播是否相关 6)信息量:如果这卡只有一句短话的大字、而这拍讲的是知识/关系/对比内容,就是不达标(该用关系图/对照表/步骤链)`,
       );
       if (qa.ok || pass === passes) {
         if (!qa.ok) console.log(`  [footage] ${clip.name} QA 仍有 issue(放行):${qa.issues?.join(";")}`);

@@ -84,12 +84,12 @@ ${TASTE}
       "name": "c01",
       "beat": "hook|context|evidence|turn|landing 之一",
       "text": "这个节拍的口播(1-3句完整的话)",
-      "visual_type": "text|data|quote|contrast|step 之一",
+      "visual_type": "text|data|quote|contrast|step|diagram|table|flow 之一",
       "visual": "画面简报:这拍卡上要出现什么具体内容"
     }
   ]
 }
-clips 5-7 个,全片覆盖 hook→landing 完整弧线。text 加起来就是 narration,不许缺段。visual_type:观点/金句用 quote,数字对比用 data,两方对照用 contrast,流程步骤用 step,其余 text。`,
+clips 5-7 个,全片覆盖 hook→landing 完整弧线。text 加起来就是 narration,不许缺段。visual_type:关系/相互作用(生克合冲)用 diagram,多方对照用 table,流程步骤用 flow,金句用 quote,关键数字用 data;纯文字 text 只是兜底——知识内容必须有结构。`,
     },
   ],
 
@@ -125,20 +125,29 @@ ${JSON.stringify(draft, null, 1)}
       },
       {
         role: "user",
-        content: `第 ${i + 1}/${n} 拍(${clip.beat || "?"},视觉类型:${clip.visual_type || "text"}):
+        content: `第 ${i + 1}/${n} 拍(${clip.beat || "?"},脚本建议画面类型:${clip.visual_type || "text"}):
 口播:"${clip.text}"
 画面简报:${clip.visual || "(无,自行设计)"}${assetBlock}
 
-设计这张卡的内容,返回 JSON:
+卡型选择(按内容选,别惯性):
+- 关系/相互作用(A 生 B、X 克 Y、双方匹配) → diagram(节点+带标签箭头)
+- 两方/多方多项对照(他的 vs 你的,旧 vs 新) → table(对照表)
+- 流程/步骤/先后顺序 → flow(编号步骤链)
+- 金句(能单独截图传播) → quote;关键数字 → data;真对立一句话 → contrast
+- 纯文字大字卡(text)只兜底——知识内容不许用 text 糊弄;每一拍的信息量要顶得上一段话
+脚本建议的类型不合适就换对的。返回 JSON:
 {
-  "type": "${clip.visual_type === "data" ? "data" : clip.visual_type === "contrast" ? "contrast" : clip.visual_type === "step" ? "step" : clip.visual_type === "quote" ? "quote" : "text"}",
-  "kicker": "顶部小字(≤12字,可空字符串)",
-  "big": "主视觉大字(≤10字;data 卡=数字本体;quote 卡=金句核心;contrast 卡=对比左方,如\"以为的样子\";step 卡=这一步的动作,≤6字)",
-  "sub": "大字下面一行解释(≤20字,可空)",
-  "big2": "仅 contrast 卡用:对比右方(如\"实际的样子\"),没有则空字符串",
-  "step_no": "仅 step 卡用:第几步的数字,没有则空字符串",
-  "foot": "底部一行小字备注(≤16字,通常空)"
-}`,
+  "type": "text|data|quote|contrast|step|diagram|table|flow 之一",
+  "kicker": "顶部小字标签(≤12字,可空)",
+  "big": "主标题/主信息(≤10字;data=数字本体;table/flow=这一表的标题)",
+  "sub": "一行补充(≤20字,可空)",
+  "big2": "仅 contrast 用", "step_no": "仅 step 用",
+  "nodes": [{"label":"节点名","sub":"一行小注(可空)","nextLabel":"到下一个节点的关系词(如 生/克/合)","tone":"accent 可空"}],
+  "cols": ["列头1","列头2"], "rows": [["行1列1","行1列2"]],
+  "steps": [{"label":"步骤名","sub":"一行小注(可空)"}],
+  "foot": "底部小字备注(通常空)"
+}
+nodes/cols/rows/steps 只填当前 type 需要的,其它省略。`,
       },
     ];
   },

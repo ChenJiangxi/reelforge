@@ -13,7 +13,7 @@ export function sizeFor(aspect) {
   return { width: 1080, height: 1920 }; // 9:16
 }
 
-export function cardHTML({ kicker = "", big = "", sub = "", foot = "", type = "text", big2 = "", step_no = "" }, { width, height }) {
+export function cardHTML({ kicker = "", big = "", sub = "", foot = "", type = "text", big2 = "", step_no = "", nodes = [], cols = [], rows = [], steps = [] }, { width, height }) {
   const vertical = height > width;
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const bigSize = type === "data"
@@ -21,7 +21,45 @@ export function cardHTML({ kicker = "", big = "", sub = "", foot = "", type = "t
     : Math.max(90, Math.min(vertical ? 190 : 150, Math.round((vertical ? 900 : 1500) / Math.max(1, String(big).length) * 1.6)));
 
   let center;
-  if (type === "contrast") {
+  if (type === "diagram") {
+    // 关系图:节点链 + 带标签的箭头(A --克--> B)
+    center = `
+      ${kicker ? "" : ""}
+      <div class="diagram">
+        ${nodes.map((n, i) => `
+          <div class="node ${n.tone === "accent" ? "node-accent" : ""}">
+            <div class="node-label">${esc(n.label)}</div>
+            ${n.sub ? `<div class="node-sub">${esc(n.sub)}</div>` : ""}
+          </div>
+          ${i < nodes.length - 1 ? `<div class="edge"><div class="edge-line"></div><div class="edge-arrow">→</div>${n.nextLabel ? `<div class="edge-label">${esc(n.nextLabel)}</div>` : ""}</div>` : ""}
+        `).join("")}
+      </div>
+      ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
+  } else if (type === "table") {
+
+    center = `
+      ${big ? `<div class="big" style="font-size:${Math.round(bigSize * 0.6)}px;margin-bottom:${vertical ? 44 : 32}px">${esc(big)}</div>` : ""}
+      <table class="ktable">
+        <thead><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody>
+      </table>
+      ${sub ? `<div class="sub" style="font-size:${vertical ? 40 : 34}px">${esc(sub)}</div>` : ""}`;
+  } else if (type === "flow") {
+
+    center = `
+      ${big ? `<div class="big" style="font-size:${Math.round(bigSize * 0.6)}px;margin-bottom:${vertical ? 48 : 36}px">${esc(big)}</div>` : ""}
+      <div class="flow">
+        ${steps.map((st, i) => `
+          <div class="fstep">
+            <div class="fstep-no">${i + 1}</div>
+            <div class="fstep-label">${esc(st.label)}</div>
+            ${st.sub ? `<div class="fstep-sub">${esc(st.sub)}</div>` : ""}
+          </div>
+          ${i < steps.length - 1 ? `<div class="farrow">→</div>` : ""}
+        `).join("")}
+      </div>
+      ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
+  } else if (type === "contrast") {
     center = `
       <div class="versus">
         <div class="side"><div class="side-big">${esc(big)}</div></div>
@@ -88,6 +126,43 @@ body::before {
   font-size: ${vertical ? 260 : 200}px; font-weight: 900; line-height: 1; color: transparent;
   -webkit-text-stroke: 3px rgba(232,182,76,.65); margin-bottom: ${vertical ? 24 : 16}px;
 }
+/* 关系图 */
+.diagram { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: ${vertical ? 28 : 24}px; }
+.node {
+  background: rgba(245,241,233,.06); border: 2px solid rgba(245,241,233,.22); border-radius: ${vertical ? 24 : 20}px;
+  padding: ${vertical ? "36px 44px" : "28px 36px"}; text-align: center; min-width: ${vertical ? 220 : 180}px;
+}
+.node-accent { border-color: #e8b64c; background: rgba(232,182,76,.10); }
+.node-label { font-size: ${vertical ? 56 : 48}px; font-weight: 800; color: #f5f1e9; }
+.node-sub { margin-top: 10px; font-size: ${vertical ? 30 : 26}px; color: rgba(245,241,233,.55); }
+.edge { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.edge-arrow { font-size: ${vertical ? 64 : 56}px; color: #e8b64c; font-weight: 700; line-height: 1; }
+.edge-label { font-size: ${vertical ? 34 : 30}px; font-weight: 700; color: #e8b64c; }
+/* 对照表 */
+.ktable { border-collapse: collapse; width: 100%; background: rgba(245,241,233,.04); border-radius: 16px; overflow: hidden; }
+.ktable th {
+  font-size: ${vertical ? 34 : 30}px; font-weight: 700; color: #e8b64c; text-align: left;
+  padding: ${vertical ? "22px 30px" : "18px 24px"}; border-bottom: 2px solid rgba(232,182,76,.4);
+}
+.ktable td {
+  font-size: ${vertical ? 36 : 32}px; color: rgba(245,241,233,.88); text-align: left;
+  padding: ${vertical ? "22px 30px" : "18px 24px"}; border-bottom: 1px solid rgba(245,241,233,.12); line-height: 1.4;
+}
+.ktable tr:last-child td { border-bottom: none; }
+/* 步骤链 */
+.flow { display: flex; align-items: stretch; justify-content: center; gap: ${vertical ? 20 : 16}px; flex-wrap: wrap; }
+.fstep {
+  background: rgba(245,241,233,.06); border: 1px solid rgba(245,241,233,.18); border-radius: 20px;
+  padding: ${vertical ? "28px 26px" : "22px 20px"}; text-align: center; min-width: ${vertical ? 200 : 170}px; max-width: ${vertical ? 260 : 220}px;
+}
+.fstep-no {
+  width: ${vertical ? 56 : 48}px; height: ${vertical ? 56 : 48}px; margin: 0 auto ${vertical ? 16 : 12}px;
+  border-radius: 999px; background: #e8b64c; color: #121110;
+  font-size: ${vertical ? 34 : 30}px; font-weight: 800; line-height: ${vertical ? 56 : 48}px;
+}
+.fstep-label { font-size: ${vertical ? 38 : 32}px; font-weight: 700; color: #f5f1e9; line-height: 1.3; }
+.fstep-sub { margin-top: 8px; font-size: ${vertical ? 27 : 24}px; color: rgba(245,241,233,.55); line-height: 1.4; }
+.farrow { align-self: center; font-size: ${vertical ? 44 : 40}px; color: rgba(232,182,76,.6); font-weight: 700; }
 </style></head><body>
 <div class="wrap">
   ${kicker ? `<div class="kicker">${esc(kicker)}</div>` : ""}
