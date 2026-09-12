@@ -26,8 +26,8 @@ export function AssetBar({ projectId, assets }: { projectId: string; assets: Ass
   }
 
   return (
-    <div className="mb-4 flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
-      <span className="shrink-0 text-xs font-medium text-muted-foreground">素材库</span>
+    <div className="mb-5 flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
+      <span className="shrink-0 text-sm font-medium text-muted-foreground">素材库</span>
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
         {assets.map((a) =>
           a.kind === "video" ? (
@@ -45,12 +45,12 @@ export function AssetBar({ projectId, assets }: { projectId: string; assets: Ass
               src={a.url}
               alt={a.name}
               title={a.name}
-              className="h-8 w-auto shrink-0 rounded border border-border object-cover"
+              className="h-10 w-auto shrink-0 rounded border border-border object-cover"
             />
           ),
         )}
         {assets.length === 0 && (
-          <span className="text-xs text-muted-foreground/60">
+          <span className="text-[13px] text-muted-foreground/60">
             上传产品录屏/实拍图——真素材永远比字卡好,素材阶段会挑着用
           </span>
         )}
@@ -66,7 +66,7 @@ export function AssetBar({ projectId, assets }: { projectId: string; assets: Ass
       <button
         onClick={() => inputRef.current?.click()}
         disabled={busy}
-        className="shrink-0 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-foreground/30 hover:text-foreground disabled:opacity-40"
+        className="shrink-0 rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground hover:border-foreground/30 hover:text-foreground disabled:opacity-40"
       >
         {busy ? "上传中…" : "+ 上传"}
       </button>

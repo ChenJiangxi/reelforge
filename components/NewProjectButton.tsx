@@ -39,14 +39,14 @@ export function NewProjectButton() {
   }
 
   const fieldCls =
-    "w-full rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent/60";
+    "w-full rounded-md border border-border bg-card px-3.5 py-2.5 text-sm outline-none focus:border-accent/60";
   const labelCls = "section-label mb-1.5 block";
 
   if (!open) {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="shrink-0 whitespace-nowrap rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-85"
+        className="shrink-0 whitespace-nowrap rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-85"
       >
         + 新建项目
       </button>
@@ -54,8 +54,8 @@ export function NewProjectButton() {
   }
 
   return (
-    <div className="absolute right-0 top-full z-30 mt-2 w-[min(36rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-5 shadow-sm">
-      <div className="mb-4 text-sm font-semibold">新建项目</div>
+    <div className="absolute right-0 top-full z-30 mt-2 w-[min(36rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-6 shadow-sm">
+      <div className="mb-5 text-base font-semibold">新建项目</div>
 
       <div className="mb-3">
         <label className={labelCls}>主题 / 角度</label>
@@ -69,7 +69,7 @@ export function NewProjectButton() {
         />
       </div>
 
-      <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className={labelCls}>标题(可留空)</label>
           <input value={title} onChange={(e) => setTitle(e.target.value)} className={fieldCls} />
@@ -118,7 +118,7 @@ export function NewProjectButton() {
         <button
           onClick={submit}
           disabled={busy || !topic.trim()}
-          className="rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
+          className="rounded-full bg-foreground px-6 py-2.5 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
         >
           {busy ? "创建中…" : "创建"}
         </button>

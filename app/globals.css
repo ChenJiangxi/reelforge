@@ -45,6 +45,12 @@ body {
   }
 }
 
+/* thin quiet scrollbars */
+.overflow-y-auto, .overflow-x-auto {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(28 25 23 / 0.15) transparent;
+}
+
 /* tiny uppercase tracked section label (hermit idiom) */
 .section-label {
   font-size: 11px;

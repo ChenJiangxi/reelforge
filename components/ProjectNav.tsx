@@ -22,7 +22,7 @@ export function ProjectNav({ projects }: { projects: NavProject[] }) {
   return (
     <>
       {/* desktop sidebar list */}
-      <div className="mt-6 hidden min-h-0 flex-1 flex-col md:flex">
+      <div className="mt-8 hidden min-h-0 flex-1 flex-col md:flex">
         <div className="section-label mb-2 flex items-center justify-between px-2">
           <span>项目</span>
           <span className="font-mono tabular-nums">{projects.length}</span>
@@ -34,11 +34,11 @@ export function ProjectNav({ projects }: { projects: NavProject[] }) {
               <Link
                 key={p.id}
                 href={`/project/${p.id}`}
-                className={`flex items-start gap-2 rounded-md px-2 py-1.5 text-[13px] leading-snug ${
+                className={`flex items-start gap-2.5 rounded-md px-2.5 py-2 text-sm leading-snug ${
                   active ? "bg-muted font-medium" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                 }`}
               >
-                <span className={`mt-1.5 inline-block size-1.5 shrink-0 rounded-full ${DOT[p.status] ?? "bg-border"}`} />
+                <span className={`mt-[7px] inline-block size-1.5 shrink-0 rounded-full ${DOT[p.status] ?? "bg-border"}`} />
                 <span className="line-clamp-2">{p.title}</span>
               </Link>
             );

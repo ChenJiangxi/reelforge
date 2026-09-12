@@ -38,7 +38,7 @@ export function ProjectWorkspace({
   return (
     <>
       {/* stepper = stage selector */}
-      <div className="mb-4 flex items-center rounded-lg border border-border bg-card px-4 py-3">
+      <div className="mb-5 flex items-center rounded-xl border border-border bg-card px-5 py-4">
         {stages.map((s, i) => {
           const selected = selectedId === s.id || (selectedId === null && awaiting?.id === s.id);
           return (
@@ -49,12 +49,12 @@ export function ProjectWorkspace({
                 className="group flex flex-col items-center gap-1"
               >
                 <span
-                  className={`size-2 rounded-full transition ${DOT[s.status] ?? DOT.pending} ${
+                  className={`size-2.5 rounded-full transition ${DOT[s.status] ?? DOT.pending} ${
                     selected ? "ring-4 ring-accent-soft" : "group-hover:ring-2 group-hover:ring-muted"
                   }`}
                 />
                 <span
-                  className={`whitespace-nowrap text-[10px] ${
+                  className={`whitespace-nowrap text-xs ${
                     selected
                       ? "font-medium text-accent"
                       : s.status === "awaiting_review"
@@ -66,7 +66,7 @@ export function ProjectWorkspace({
                 </span>
               </button>
               {i < stages.length - 1 && (
-                <div className={`mx-1 mb-4 h-px min-w-2 flex-1 ${s.status === "approved" ? "bg-success/50" : "bg-border"}`} />
+                <div className={`mx-1.5 mb-5 h-px min-w-2 flex-1 ${s.status === "approved" ? "bg-success/50" : "bg-border"}`} />
               )}
             </div>
           );

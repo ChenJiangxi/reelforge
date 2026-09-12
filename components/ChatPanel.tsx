@@ -60,16 +60,16 @@ export function ChatPanel({
 
   return (
     <div className="flex h-full min-h-[60vh] flex-col rounded-lg border border-border bg-card shadow-xs">
-      <div className="border-b border-border px-4 py-3">
-        <div className="text-sm font-semibold">对话剪辑</div>
-        <div className="mt-0.5 text-xs text-muted-foreground">
+      <div className="border-b border-border px-5 py-4">
+        <div className="text-[15px] font-semibold">对话剪辑</div>
+        <div className="mt-1 text-xs text-muted-foreground">
           直接说:把第3句改成… / 删掉第5句 / 封面换一版
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
         {messages.length === 0 && pending.length === 0 && (
-          <div className="rounded-md bg-muted p-3 text-xs leading-relaxed text-muted-foreground">
+          <div className="rounded-lg bg-muted p-4 text-sm leading-relaxed text-muted-foreground">
             这就是 chatcut 那个聊天框。改词、删句、调画面、换封面,直接打字;
             agent 改完会重配音、重剪,右侧预览自动更新。
           </div>
@@ -77,7 +77,7 @@ export function ChatPanel({
         {[...messages, ...pending].map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
+              className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed ${
                 m.role === "user"
                   ? "rounded-br-sm bg-foreground text-background"
                   : "rounded-bl-sm bg-muted text-foreground"
@@ -90,7 +90,7 @@ export function ChatPanel({
         <div ref={bottomRef} />
       </div>
 
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border p-4">
         <div className="flex items-end gap-2">
           <textarea
             value={text}
@@ -103,12 +103,12 @@ export function ChatPanel({
             }}
             placeholder="说一句修改…"
             rows={1}
-            className="max-h-28 min-h-9 flex-1 resize-none rounded-full border border-border bg-background px-4 py-2 text-sm outline-none focus:border-accent/60"
+            className="max-h-28 min-h-11 flex-1 resize-none rounded-full border border-border bg-background px-5 py-2.5 text-[15px] outline-none focus:border-accent/60"
           />
           <button
             onClick={send}
             disabled={busy || !text.trim()}
-            className="shrink-0 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
+            className="shrink-0 rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
           >
             发
           </button>

@@ -35,16 +35,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           {authed && <ProjectNav projects={projects} />}
         </header>
         <div className="flex min-h-screen">
-          <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-border bg-card p-5 md:flex">
-            <Link href="/" className="mb-6 text-[17px] font-bold tracking-tight">
+          <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border bg-card p-6 md:flex">
+            <Link href="/" className="mb-8 text-lg font-bold tracking-tight">
               reel<span className="text-accent">forge</span>
             </Link>
             <div className="section-label mb-2 px-2">工作台</div>
             <nav className="space-y-0.5 text-sm">
-              <Link href="/" className="block rounded-md bg-muted px-3 py-2 font-medium">
+              <Link href="/" className="block rounded-md bg-muted px-3 py-2.5 font-medium">
                 全部项目
               </Link>
-              <div className="block cursor-default rounded-md px-3 py-2 text-muted-foreground/60">
+              <div className="block cursor-default rounded-md px-3 py-2.5 text-muted-foreground/60">
                 数据反馈<span className="ml-1.5 text-[10px]">soon</span>
               </div>
             </nav>
@@ -59,7 +59,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               你在关键点审
             </div>
           </aside>
-          <main className="min-w-0 flex-1 p-4 md:p-8">{children}</main>
+          <main className="min-w-0 flex-1 p-5 md:p-10">{children}</main>
         </div>
       </body>
     </html>
