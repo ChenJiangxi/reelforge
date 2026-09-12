@@ -23,7 +23,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <StatusBadge status={project.status} />
       </div>
       <p className="mb-6 text-sm text-foreground/50">
-        #{project.platform} · {project.topic}
+        #{project.platform} · {project.aspect} ·{" "}
+        {project.voice === "clone-zh" ? "克隆音·中文" : "英文旁白"} ·{" "}
+        {project.bgm === "yes" ? "带 BGM" : "无 BGM"} · ~{project.duration}s · {project.topic}
       </p>
       <div className="space-y-3">
         {project.stages.map((s) => (

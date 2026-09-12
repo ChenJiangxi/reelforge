@@ -23,15 +23,9 @@ export async function POST(req: NextRequest) {
   if (decision === "approve") {
     if (stage.kind === "deliver") {
       await runDelivery(stage.projectId);
-    } else {
-      // advance the next stage to its review gate
-      const next = await prisma.stage.findFirst({
-        where: { projectId: stage.projectId, order: stage.order + 1 },
-      });
-      if (next && next.status === "pending") {
-        await prisma.stage.update({ where: { id: next.id }, data: { status: "awaiting_review" } });
-      }
     }
+    // Otherwise the next stage is already `pending`; the worker claims it
+    // once all earlier stages are approved (see /api/worker/poll).
   }
 
   const stages = await prisma.stage.findMany({ where: { projectId: stage.projectId } });

@@ -17,16 +17,18 @@ export function StageCard({ stage, projectId }: { stage: StageDTO; projectId: st
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [comment, setComment] = useState("");
+  const [err, setErr] = useState("");
   const art: Artifacts = stage.artifacts ? JSON.parse(stage.artifacts) : {};
   const comments: Comment[] = stage.comments ? JSON.parse(stage.comments) : [];
   const awaiting = stage.status === "awaiting_review";
-  // Bundled /seed/… assets are served statically by Next (Range-supported);
-  // real pipeline renders (absolute fs paths) stream through /api/media.
-  const videoSrc = art.video?.startsWith("/seed/") ? art.video : `/api/media/${projectId}`;
-  const coverSrc = art.cover?.startsWith("/seed/") ? art.cover : `/api/media/${projectId}?kind=cover`;
 
   async function resolve(decision: "approve" | "comment" | "reject") {
     if (decision === "comment" && !comment.trim()) return;
+    if (decision === "reject" && !comment.trim()) {
+      setErr("打回要写一句原因，agent 照着改");
+      return;
+    }
+    setErr("");
     setBusy(true);
     await fetch("/api/stage/resolve", {
       method: "POST",
@@ -46,7 +48,10 @@ export function StageCard({ stage, projectId }: { stage: StageDTO; projectId: st
       </div>
 
       {art.video && (
-        <video controls className="mt-2 w-full max-w-sm rounded-lg border border-border" src={videoSrc} />
+        <video controls className="mt-2 w-full max-w-sm rounded-lg border border-border" src={art.video} />
+      )}
+      {art.audio && (
+        <audio controls className="mt-2 w-full max-w-sm" src={art.audio} />
       )}
       {art.script && (
         <pre className="mt-2 whitespace-pre-wrap rounded bg-muted p-3 text-sm text-foreground/80">{art.script}</pre>
@@ -55,7 +60,7 @@ export function StageCard({ stage, projectId }: { stage: StageDTO; projectId: st
         // eslint-disable-next-line @next/next/no-img-element
         <img
           alt="cover"
-          src={coverSrc}
+          src={art.cover}
           className={`mt-2 rounded-lg border border-border ${stage.kind === "deliver" ? "w-40" : "w-full max-w-xs"}`}
         />
       )}
@@ -66,7 +71,7 @@ export function StageCard({ stage, projectId }: { stage: StageDTO; projectId: st
             <img
               key={i}
               alt={`素材 ${i + 1}`}
-              src={src.startsWith("/seed/") ? src : `/api/media/${projectId}?kind=cover`}
+              src={src}
               className="w-full rounded-lg border border-border"
             />
           ))}
@@ -100,6 +105,7 @@ export function StageCard({ stage, projectId }: { stage: StageDTO; projectId: st
             rows={2}
             className="mb-2 w-full rounded border border-border bg-background p-2 text-sm outline-none focus:border-accent/50"
           />
+          {err && <div className="mb-2 text-xs text-red-400">{err}</div>}
           <div className="flex gap-2">
             <button
               disabled={busy}

@@ -4,15 +4,19 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = env("DATABASE_URL")
 }
 
-// A video project the reelforge hermit-agent works through, with a review gate per stage.
+// A video project the pipeline works through, with a review gate per stage.
 model Project {
   id          String   @id @default(cuid())
   title       String
   topic       String
   platform    String   @default("douyin")
+  voice       String   @default("clone-zh") // clone-zh | minimax-en
+  bgm         String   @default("none")     // none | yes
+  aspect      String   @default("9:16")     // 9:16 | 16:9
+  duration    Int      @default(75)         // target seconds
   status      String   @default("producing") // producing | reviewing | approved | delivered
   packagePath String?
   createdAt   DateTime @default(now())
@@ -20,7 +24,7 @@ model Project {
   stages      Stage[]
 }
 
-// One pipeline step. `status: awaiting_review` = a human review gate (learned from hermit-ui's Interaction).
+// One pipeline step. `status: awaiting_review` = a human review gate.
 model Stage {
   id        String   @id @default(cuid())
   projectId String
@@ -28,7 +32,7 @@ model Stage {
   kind      String   // topic | script | footage | voice | edit | subtitles | polish | deliver
   order     Int
   status    String   @default("pending") // pending | working | awaiting_review | approved | changes_requested
-  artifacts String?  // JSON: { video?, script?, caption?, cover?, note? }
+  artifacts String?  // JSON: { video?, audio?, script?, caption?, cover?, images?[], note? } — media as /api/media/<projectId>/<file> URLs
   comments  String?  // JSON: [{ ts, text, decision }]
   updatedAt DateTime @updatedAt
 

@@ -24,8 +24,10 @@ export function stageLabel(k: string): string {
   return STAGE_LABELS[k] ?? k;
 }
 
+// Media fields hold /api/media/<projectId>/<file> URLs served from MEDIA_DIR.
 export type Artifacts = {
   video?: string;
+  audio?: string;
   script?: string;
   cover?: string;
   note?: string;
