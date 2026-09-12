@@ -24,6 +24,17 @@ model Project {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   stages      Stage[]
+  messages    Message[]
+}
+
+// One chat message in the project's conversation (the 对话剪辑 layer).
+model Message {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  role      String   // user | agent
+  text      String
+  createdAt DateTime @default(now())
 }
 
 // One pipeline step. `status: awaiting_review` = a human review gate.

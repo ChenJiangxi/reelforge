@@ -31,6 +31,19 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* editor layout: chat rail + preview, side by side on desktop */
+.editor-grid {
+  display: grid;
+  align-items: stretch;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+@media (min-width: 1024px) {
+  .editor-grid {
+    grid-template-columns: 400px 1fr;
+  }
+}
+
 /* tiny uppercase tracked section label (hermit idiom) */
 .section-label {
   font-size: 11px;

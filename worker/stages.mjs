@@ -1,6 +1,6 @@
 // The eight stage executors. Each takes the poll item (project + upstream
 // artifacts) and returns the artifacts patch to submit for review.
-import { writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { chatJSON } from "./llm.mjs";
 import { PROMPTS } from "./prompts.mjs";
@@ -57,7 +57,14 @@ async function tts(text, profile) {
 
 async function voiceClip(item, clip, dir) {
   const p = join(dir, `${clip.name}.mp3`);
-  if (!existsSync(p)) writeFileSync(p, await tts(clip.text, VOICES[item.voice] || VOICES["clone-zh"]));
+  const marker = join(dir, `${clip.name}.txt`);
+  // Re-generate when the line changed, even if an old mp3 with this name exists
+  // (chat edits reuse clip names; TTS is cheap, stale audio is confusing).
+  const stale = !existsSync(p) || !existsSync(marker) || readFileSync(marker, "utf8") !== clip.text;
+  if (stale) {
+    writeFileSync(p, await tts(clip.text, VOICES[item.voice] || VOICES["clone-zh"]));
+    writeFileSync(marker, clip.text);
+  }
   return { path: p, dur: await ffprobeDur(p) };
 }
 
@@ -98,15 +105,27 @@ async function footage(item) {
   if (!clips?.length) throw new Error("上游脚本没有 clips");
   const dir = workDir(item, "cards");
   const size = sizeFor(item.aspect);
+  // Reuse card designs from a previous pass for clips whose text is unchanged —
+  // chat edits usually touch one line; regenerating all 12 designs is waste.
+  const prevByName = new Map(
+    (item.artifacts?.cards || []).map((c) => [c.name, c]),
+  );
   const images = [];
   const cards = [];
   for (let i = 0; i < clips.length; i++) {
-    const content = await chatJSON(guided(item, PROMPTS.card(item, clips[i], i, clips.length)), { temperature: 0.6 });
-    const png = join(dir, `${clips[i].name}.png`);
+    const clip = clips[i];
+    const prev = prevByName.get(clip.name);
+    let content;
+    if (prev && !item.reviewNote && prev.text === clip.text && prev.big) {
+      content = { type: prev.type, kicker: prev.kicker, big: prev.big, sub: prev.sub, foot: prev.foot };
+    } else {
+      content = await chatJSON(guided(item, PROMPTS.card(item, clip, i, clips.length)), { temperature: 0.6 });
+    }
+    const png = join(dir, `${clip.name}.png`);
     await renderCard(content, size, png);
-    const { url } = await upload(item.projectId, png, `card-${clips[i].name}.png`);
+    const { url } = await upload(item.projectId, png, `card-${clip.name}.png`);
     images.push(url);
-    cards.push({ name: clips[i].name, ...content });
+    cards.push({ name: clip.name, text: clip.text, ...content });
   }
   await closeBrowser();
   return { images, cards, note: `${images.length} 张大字卡(${item.aspect})。画面和台词是否对得上,请审。` };
