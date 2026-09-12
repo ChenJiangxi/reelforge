@@ -2,7 +2,7 @@
 // artifacts) and returns the artifacts patch to submit for review.
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { chatJSON } from "./llm.mjs";
+import { chatJSON, reviewImage } from "./llm.mjs";
 import { PROMPTS } from "./prompts.mjs";
 import { renderCard, renderSubLine, sizeFor, closeBrowser } from "./cards.mjs";
 import { ffmpeg, ffprobeDur } from "./ffmpeg.mjs";
@@ -129,6 +129,7 @@ async function footage(item) {
     // 素材优先:聊天指定的(clip.asset)> LLM 挑的 > 字卡
     let assetName = clip.asset || null;
     let content = null;
+    let freshDesign = false;
     if (!assetName) {
       if (prev && !item.reviewNote && prev.text === clip.text && (prev.big || prev.asset)) {
         if (prev.asset) assetName = prev.asset;
@@ -137,9 +138,11 @@ async function footage(item) {
       } else {
         console.log(`  [footage] ${clip.name} designing…`);
         content = await chatJSON(guided(item, PROMPTS.card(item, clip, i, clips.length)), { temperature: 0.6 });
+        freshDesign = true;
         if (content.asset && assets.some((a) => a.name === content.asset)) {
           assetName = content.asset;
           content = null;
+          freshDesign = false;
         }
       }
     }
@@ -164,7 +167,25 @@ async function footage(item) {
     }
 
     const png = join(dir, `${clip.name}.png`);
-    await renderCard(content, size, png);
+    // 视觉审稿循环(只对新设计):渲出来 → 视觉模型按教案挑毛病 → 有问题改内容重渲一次
+    let passes = freshDesign ? 2 : 1;
+    for (let pass = 1; pass <= passes; pass++) {
+      await renderCard(content, size, png);
+      if (!freshDesign) break;
+      const qa = await reviewImage(
+        png,
+        `审这张短视频字卡(口播:"${clip.text}")。清单:1)第一眼是否落在主信息大字上 2)文字有没有溢出/被裁切/挤出画面 3)底部 17% 字幕安全区有没有被占用 4)有没有错别字/多字漏字 5)卡内容和口播是否相关`,
+      );
+      if (qa.ok || pass === passes) {
+        if (!qa.ok) console.log(`  [footage] ${clip.name} QA 仍有 issue(放行):${qa.issues?.join(";")}`);
+        break;
+      }
+      console.log(`  [footage] ${clip.name} QA 打回:${qa.issues?.join(";")} → 重设计`);
+      content = await chatJSON(
+        [...PROMPTS.card(item, clip, i, clips.length), { role: "user", content: `上一版被视觉审稿打回:${qa.issues?.join(";")}。针对问题改,返回同样结构的 JSON。` }],
+        { temperature: 0.4 },
+      );
+    }
     console.log(`  [footage] ${clip.name} rendered, uploading`);
     const { url } = await upload(item.projectId, png, `card-${clip.name}.png`);
     images.push(url);

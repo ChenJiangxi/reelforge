@@ -44,3 +44,27 @@ export async function chatJSON(messages, opts = {}) {
   if (!m) throw new Error(`no JSON in LLM reply: ${text.slice(0, 200)}`);
   return JSON.parse(m[0]);
 }
+
+// Vision pass for rendered cards — gemini-2.5-flash-lite ($0.10/M in) actually
+// LOOKS at the PNG and returns { ok, issues[] } against the visual playbook.
+const VISION_MODEL = process.env.VISION_MODEL || "google/gemini-2.5-flash-lite";
+
+export async function reviewImage(pngPath, checklist) {
+  const { readFileSync } = await import("node:fs");
+  const b64 = readFileSync(pngPath).toString("base64");
+  const text = await chat(
+    [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: checklist + '\n\n返回 JSON:{"ok":true|false,"issues":["问题1","问题2"]}。没问题就 ok=true,issues=[]。只挑清单里的真毛病,别发挥。' },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
+        ],
+      },
+    ],
+    { model: VISION_MODEL, temperature: 0.1, maxTokens: 800 },
+  );
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return { ok: true, issues: [] }; // 审稿失败不当阻塞
+  try { return JSON.parse(m[0]); } catch { return { ok: true, issues: [] }; }
+}

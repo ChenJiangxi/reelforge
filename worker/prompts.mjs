@@ -1,5 +1,19 @@
 // Taste playbook baked into every creative prompt — Jessy's hard standards,
 // carried over from the ops-bilibili video-pipeline.
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// 视觉教案(画面生成的"skill")——可独立编辑,worker 启动时读入。
+const VISUAL_TASTE = (() => {
+  try {
+    return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "playbooks", "visual.md"), "utf8").trim();
+  } catch {
+    return "";
+  }
+})();
+
+export { VISUAL_TASTE };
 export const TASTE = `
 审美硬标准(必须遵守):
 - 真素材不吹:数字只用真实值,绝不编热搜、假统计、假案例。没有真数字就不谈数字。
@@ -107,7 +121,7 @@ ${JSON.stringify(draft, null, 1)}
     return [
       {
         role: "system",
-        content: `你是短视频画面设计,把一节口播设计成一张卡的内容。\n${TASTE}\n卡片语言:${item.voice === "minimax-en" ? "英文" : "中文"}。`,
+        content: `你是短视频画面设计,把一节口播设计成一张卡的内容。\n${TASTE}\n\n${VISUAL_TASTE}\n\n卡片语言:${item.voice === "minimax-en" ? "英文" : "中文"}。`,
       },
       {
         role: "user",
@@ -132,7 +146,7 @@ ${JSON.stringify(draft, null, 1)}
   cover: (item, topic, script) => [
     {
       role: "system",
-      content: `你是抖音封面设计。封面风格:巨字+戏剧化,爆款风,但不能 tacky(不用感叹号轰炸、不低俗)。${TASTE}`,
+      content: `你是抖音封面设计。封面风格:巨字+戏剧化,爆款风,但不能 tacky(不用感叹号轰炸、不低俗)。${TASTE}\n\n${VISUAL_TASTE}`,
     },
     {
       role: "user",
