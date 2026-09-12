@@ -10,6 +10,7 @@ export type ChatOp =
   | { action: "insert_after"; clip: string; text: string; visual?: string }
   | { action: "edit_visual"; clip: string; visual: string }
   | { action: "redo_stage"; kind: string; note: string }
+  | { action: "review"; decision: "approve" | "reject"; note?: string }
   | { action: "reply"; text: string };
 
 export type ParsedChat = { ops: ChatOp[]; reply: string };
@@ -20,6 +21,7 @@ export async function parseChat(
   userText: string,
   clips: Clip[],
   project: { topic: string; title: string },
+  awaiting?: { kind: string; label: string } | null,
 ): Promise<ParsedChat> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) {
@@ -28,6 +30,15 @@ export async function parseChat(
   const clipList = clips.length
     ? clips.map((c) => `${c.name}: "${c.text}"(画面:${c.visual || "无"})`).join("\n")
     : "(还没有分句——脚本阶段还没产出)";
+
+  const awaitingBlock = awaiting
+    ? `【当前状态:「${awaiting.label}」阶段正在等她审】
+此时她的话先按这个判断:
+- 满意/肯定(可以/过了/行/没问题/通过) → {"action":"review","decision":"approve"}
+- 不满意/批评/要改(没激情/不行/换/这句不对/重做) → {"action":"review","decision":"reject","note":"把她的原话整理成给 agent 的修改指示"}
+- 如果是针对其他阶段或片子的修改,仍走下面的普通操作。
+review 操作优先于一切普通操作——她在审,不是在下新需求。`
+    : "【当前状态:没有待审阶段】她的话都是普通修改或闲聊。";
 
   const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -47,6 +58,7 @@ export async function parseChat(
 - {"action":"edit_visual","clip":"c02","visual":"新画面简报"} 只改某句的画面卡
 - {"action":"redo_stage","kind":"阶段","note":"具体修改指示"} 重做整个阶段(阶段∈ topic|script|footage|voice|edit|subtitles|deliver;用于"封面换一版""配音慢点""文案重写"这类整阶段的活)
 - {"action":"reply","text":"回复"} 不需要改片子(闲聊/提问),直接回话
+${awaitingBlock}
 规则:
 - 她说的"第N句"对应列表顺序(c01=第1句)。
 - 拿不准指哪句时不要瞎改,用 reply 反问。

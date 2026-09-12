@@ -17,6 +17,7 @@ export function PreviewPane({
   audio,
   wave,
   review,
+  working,
 }: {
   video?: string;
   clips: ClipThumb[];
@@ -24,6 +25,7 @@ export function PreviewPane({
   audio?: string;
   wave?: string;
   review?: ReviewTarget | null;
+  working?: { kind: string; reason?: string | null } | null;
 }) {
   const [inspect, setInspect] = useState<ClipThumb | null>(null);
   const [showCut, setShowCut] = useState(false);
@@ -59,6 +61,16 @@ export function PreviewPane({
         <ReviewBody kind={review.kind} artifacts={review.artifacts} stageId={review.stageId} vertical={vertical} />
       ) : (
         <>
+          {working && (
+            <div className="flex items-center gap-2 border-b border-border bg-muted/70 px-4 py-2 text-xs">
+              <span className="inline-block size-1.5 animate-pulse rounded-full bg-accent" />
+              <span className="text-muted-foreground">
+                正在做「{stageLabel(working.kind)}」
+                {working.reason ? <>,因为你:<span className="text-foreground/80">{working.reason.slice(0, 40)}{working.reason.length > 40 ? "…" : ""}</span></> : null}
+                — 旧版先看着,好了自动切审核
+              </span>
+            </div>
+          )}
           <div className="flex min-h-0 flex-1 items-center justify-center bg-muted/50 p-4">
             {!anyMedia && (
               <div className="py-16 text-center text-sm text-muted-foreground">

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { parseChat, applyOps, type Clip, type ChatOp } from "@/lib/chat-ops";
-import { STAGE_ORDER } from "@/lib/stages";
+import { resolveStage } from "@/lib/resolve-stage";
+import { STAGE_ORDER, stageLabel } from "@/lib/stages";
 
 // Never trust the LLM's stage name — map by what the instruction is ABOUT.
 // Note text wins over the raw kind ("封面" → deliver even if it said "topic").
@@ -44,17 +45,41 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const scriptStage = project.stages.find((s) => s.kind === "script");
   const scriptArt = scriptStage?.artifacts ? JSON.parse(scriptStage.artifacts) : {};
   const clips: Clip[] = Array.isArray(scriptArt.clips) ? scriptArt.clips : [];
+  const awaiting = project.stages.find((s) => s.status === "awaiting_review") ?? null;
 
   let parsed;
   try {
-    parsed = await parseChat(String(text).trim(), clips, project);
+    parsed = await parseChat(
+      String(text).trim(),
+      clips,
+      project,
+      awaiting ? { kind: awaiting.kind, label: stageLabel(awaiting.kind) } : null,
+    );
   } catch (e) {
     const reply = `解析失败(${e instanceof Error ? e.message : "LLM 错误"}),你的消息我记下了,稍后再试。`;
     await prisma.message.create({ data: { projectId: id, role: "agent", text: reply } });
     return NextResponse.json({ ok: true, reply });
   }
 
-  const clipOps = parsed.ops.filter((o) => o.action !== "reply" && o.action !== "redo_stage");
+  // ── review intent while a stage is at the gate: her words ARE the verdict ──
+  const reviewOp = parsed.ops.find((o): o is Extract<ChatOp, { action: "review" }> => o.action === "review");
+  if (reviewOp && awaiting) {
+    const ok = await resolveStage(
+      awaiting.id,
+      reviewOp.decision,
+      reviewOp.decision === "reject" ? reviewOp.note || String(text).trim() : undefined,
+    );
+    if (ok) {
+      const reply =
+        reviewOp.decision === "approve"
+          ? `「${stageLabel(awaiting.kind)}」过了,agent 接着做下一阶段。`
+          : `「${stageLabel(awaiting.kind)}」打回了,原因记上了,agent 重做中。`;
+      await prisma.message.create({ data: { projectId: id, role: "agent", text: reply } });
+      return NextResponse.json({ ok: true, reply });
+    }
+  }
+
+  const clipOps = parsed.ops.filter((o) => o.action !== "reply" && o.action !== "redo_stage" && o.action !== "review");
   const redoOps = parsed.ops.filter((o): o is Extract<ChatOp, { action: "redo_stage" }> => o.action === "redo_stage");
   const notes: string[] = [];
 

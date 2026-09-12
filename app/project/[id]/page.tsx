@@ -60,6 +60,18 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     ? { stageId: awaiting.id, kind: awaiting.kind, artifacts: awaiting.artifacts ? JSON.parse(awaiting.artifacts) : {} }
     : null;
 
+  // "制作中" context for the preview banner: which stage is being redone and why
+  // (why = her latest chat message, or the reject note that triggered it).
+  const workingStage = project.stages.find((s) => s.status === "working") ?? null;
+  const lastUserMsg = [...project.messages].reverse().find((m) => m.role === "user");
+  let workingReason: string | null = null;
+  if (workingStage) {
+    const comments: { ts: number; text: string; decision: string }[] = workingStage.comments
+      ? JSON.parse(workingStage.comments)
+      : [];
+    workingReason = comments.filter((c) => c.decision === "reject").at(-1)?.text ?? lastUserMsg?.text ?? null;
+  }
+
   return (
     <div className="max-w-6xl">
       <a href="/" className="text-sm text-muted-foreground hover:text-foreground">
@@ -105,7 +117,15 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <ChatPanel projectId={project.id} messages={project.messages.map((m) => ({ role: m.role, text: m.text, ts: m.createdAt.getTime() }))} />
         </div>
         <div className="order-1 lg:order-2">
-          <PreviewPane video={video} clips={clips} aspect={project.aspect} audio={voice.audio} wave={voice.wave} review={review} />
+          <PreviewPane
+            video={video}
+            clips={clips}
+            aspect={project.aspect}
+            audio={voice.audio}
+            wave={voice.wave}
+            review={review}
+            working={workingStage ? { kind: workingStage.kind, reason: workingReason } : null}
+          />
         </div>
       </div>
 
