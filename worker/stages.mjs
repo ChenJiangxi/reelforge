@@ -27,8 +27,13 @@ function workDir(item, sub = "") {
 }
 
 // ── MiniMax TTS (international region — domestic endpoint rejects this key) ──
+// 音色表(全部在 ops-bilibili 实测过):克隆音绑定主账号,系统音任意 key 可用。
 const VOICES = {
   "clone-zh": { voice_id: "jessy1777965074473", speed: 1.26, boost: "Chinese" },
+  "presenter-male": { voice_id: "presenter_male", speed: 1.3, boost: "Chinese" },
+  "female-tianmei": { voice_id: "female-tianmei", speed: 1.15, boost: "Chinese" },
+  "female-shaonv": { voice_id: "female-shaonv", speed: 1.15, boost: "Chinese" },
+  "audiobook-male": { voice_id: "audiobook_male_1", speed: 1.4, boost: "Chinese" },
   "minimax-en": { voice_id: "English_expressive_narrator", speed: 1.0, boost: "English" },
 };
 

@@ -24,6 +24,30 @@ export function stageLabel(k: string): string {
   return STAGE_LABELS[k] ?? k;
 }
 
+// 音色与画幅选项(worker 侧 VOICES 表同步)
+export const VOICE_OPTIONS = [
+  { value: "clone-zh", label: "克隆音·Jessy（中文）" },
+  { value: "presenter-male", label: "中文男声·主播" },
+  { value: "audiobook-male", label: "中文男声·有声书" },
+  { value: "female-tianmei", label: "中文女声·甜美" },
+  { value: "female-shaonv", label: "中文女声·少女" },
+  { value: "minimax-en", label: "英文旁白·expressive" },
+];
+
+export const ASPECT_OPTIONS = [
+  { value: "9:16", label: "竖版 9:16（抖音）", platform: "douyin" },
+  { value: "3:4", label: "竖版 3:4（小红书）", platform: "xiaohongshu" },
+  { value: "16:9", label: "横版 16:9（B站）", platform: "bilibili" },
+];
+
+export function voiceLabel(v: string): string {
+  return VOICE_OPTIONS.find((o) => o.value === v)?.label ?? v;
+}
+
+export function platformForAspect(aspect: string): string {
+  return ASPECT_OPTIONS.find((o) => o.value === aspect)?.platform ?? "douyin";
+}
+
 // Media fields hold /api/media/<projectId>/<file> URLs served from MEDIA_DIR.
 export type Artifacts = {
   video?: string;

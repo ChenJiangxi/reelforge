@@ -4,6 +4,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { ProjectWorkspace } from "@/components/ProjectWorkspace";
 import type { ClipThumb, StageView } from "@/components/PreviewPane";
 import type { Artifacts, Comment } from "@/lib/stages";
+import { ASPECT_OPTIONS, voiceLabel } from "@/lib/stages";
 
 export const dynamic = "force-dynamic";
 
@@ -19,9 +20,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   if (!project) notFound();
 
   const settings = [
-    project.platform === "bilibili" ? "B站横版" : "抖音竖版",
-    project.aspect,
-    project.voice === "clone-zh" ? "克隆音·中文" : "英文旁白",
+    ASPECT_OPTIONS.find((o) => o.value === project.aspect)?.label ?? project.aspect,
+    voiceLabel(project.voice),
     project.bgm === "yes" ? "带 BGM" : "无 BGM",
     `~${project.duration}s`,
   ];

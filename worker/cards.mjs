@@ -8,7 +8,9 @@ const require = createRequire(import.meta.url);
 const { chromium } = require("/Users/macmini003/ops-bilibili/node_modules/playwright");
 
 export function sizeFor(aspect) {
-  return aspect === "16:9" ? { width: 1920, height: 1080 } : { width: 1080, height: 1920 };
+  if (aspect === "16:9") return { width: 1920, height: 1080 };
+  if (aspect === "3:4") return { width: 1080, height: 1440 };
+  return { width: 1080, height: 1920 }; // 9:16
 }
 
 export function cardHTML({ kicker = "", big = "", sub = "", foot = "", type = "text", big2 = "", step_no = "" }, { width, height }) {

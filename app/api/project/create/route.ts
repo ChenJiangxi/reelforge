@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { STAGE_ORDER } from "@/lib/stages";
+import { STAGE_ORDER, VOICE_OPTIONS, ASPECT_OPTIONS, platformForAspect } from "@/lib/stages";
 
 // Create a new video project + its full stage pipeline (选题 → … → 交付).
 // All stages start pending; the worker claims each one once earlier stages
@@ -8,11 +8,11 @@ import { STAGE_ORDER } from "@/lib/stages";
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const topic = String(body.topic ?? "").trim();
-  const platform = String(body.platform ?? "douyin").trim() || "douyin";
+  const aspect = ASPECT_OPTIONS.some((o) => o.value === body.aspect) ? body.aspect : "9:16";
+  const platform = platformForAspect(aspect);
   const title = String(body.title ?? "").trim() || (topic ? topic.slice(0, 28) : "未命名项目");
-  const voice = ["clone-zh", "minimax-en"].includes(body.voice) ? body.voice : "clone-zh";
+  const voice = VOICE_OPTIONS.some((o) => o.value === body.voice) ? body.voice : "clone-zh";
   const bgm = body.bgm === "yes" ? "yes" : "none";
-  const aspect = body.aspect === "16:9" ? "16:9" : "9:16";
   const duration = Math.min(180, Math.max(30, parseInt(body.duration, 10) || 75));
   if (!topic) return NextResponse.json({ error: "请先填一句主题" }, { status: 400 });
 

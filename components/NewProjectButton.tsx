@@ -2,20 +2,19 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { VOICE_OPTIONS, ASPECT_OPTIONS } from "@/lib/stages";
 
 export function NewProjectButton() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [topic, setTopic] = useState("");
   const [title, setTitle] = useState("");
-  const [platform, setPlatform] = useState("douyin");
+  const [aspect, setAspect] = useState("9:16");
   const [voice, setVoice] = useState("clone-zh");
   const [bgm, setBgm] = useState("none");
   const [duration, setDuration] = useState("75");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-
-  const aspect = platform === "bilibili" ? "16:9" : "9:16";
 
   async function submit() {
     if (!topic.trim() || busy) return;
@@ -25,7 +24,7 @@ export function NewProjectButton() {
       const r = await fetch("/api/project/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic, title, platform, voice, bgm, aspect, duration }),
+        body: JSON.stringify({ topic, title, voice, bgm, aspect, duration }),
       });
       const d = await r.json();
       if (r.ok && d.id) {
@@ -76,17 +75,23 @@ export function NewProjectButton() {
           <input value={title} onChange={(e) => setTitle(e.target.value)} className={fieldCls} />
         </div>
         <div>
-          <label className={labelCls}>平台</label>
-          <select value={platform} onChange={(e) => setPlatform(e.target.value)} className={fieldCls}>
-            <option value="douyin">抖音竖版</option>
-            <option value="bilibili">B站横版</option>
+          <label className={labelCls}>画幅</label>
+          <select value={aspect} onChange={(e) => setAspect(e.target.value)} className={fieldCls}>
+            {ASPECT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </select>
         </div>
         <div>
-          <label className={labelCls}>配音</label>
+          <label className={labelCls}>音色</label>
           <select value={voice} onChange={(e) => setVoice(e.target.value)} className={fieldCls}>
-            <option value="clone-zh">克隆音·中文</option>
-            <option value="minimax-en">英文旁白</option>
+            {VOICE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </select>
         </div>
         <div className="grid grid-cols-2 gap-3">
