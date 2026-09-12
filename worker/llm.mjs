@@ -1,0 +1,26 @@
+// OpenRouter chat completions — the pipeline brain. Default deepseek-v3.2
+// (~$0.27/$0.40 per M token, a 60-90s video costs well under ¥0.1 of LLM).
+const KEY = process.env.OPENROUTER_API_KEY;
+const MODEL = process.env.LLM_MODEL || "deepseek/deepseek-v3.2";
+
+export async function chat(messages, { model = MODEL, temperature = 0.7, maxTokens = 4000 } = {}) {
+  if (!KEY) throw new Error("OPENROUTER_API_KEY not in env");
+  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`openrouter ${r.status}: ${JSON.stringify(j).slice(0, 300)}`);
+  const text = j.choices?.[0]?.message?.content;
+  if (!text) throw new Error(`openrouter empty response: ${JSON.stringify(j).slice(0, 300)}`);
+  return text;
+}
+
+// Ask for a JSON object back; tolerate code fences / surrounding prose.
+export async function chatJSON(messages, opts = {}) {
+  const text = await chat(messages, opts);
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error(`no JSON in LLM reply: ${text.slice(0, 200)}`);
+  return JSON.parse(m[0]);
+}

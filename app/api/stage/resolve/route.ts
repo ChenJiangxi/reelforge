@@ -6,6 +6,14 @@ export async function POST(req: NextRequest) {
   const { stageId, decision, text } = await req.json();
   const stage = await prisma.stage.findUnique({ where: { id: stageId } });
   if (!stage) return NextResponse.json({ error: "not found" }, { status: 404 });
+  // Review actions only make sense at the review gate — never approve a stage
+  // that is still working or has failed back to changes_requested.
+  if (stage.status !== "awaiting_review") {
+    return NextResponse.json(
+      { error: `stage is ${stage.status}, not awaiting_review` },
+      { status: 409 },
+    );
+  }
 
   const comments = stage.comments ? JSON.parse(stage.comments) : [];
   if (text) comments.push({ ts: Date.now(), text, decision });

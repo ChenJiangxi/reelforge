@@ -22,6 +22,7 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (
     pathname.startsWith("/api/worker/") ||
+    pathname.startsWith("/api/media/") || // media URLs carry an unguessable projectId; worker fetches them too
     pathname.startsWith("/login") ||
     pathname.startsWith("/api/login") ||
     pathname === "/favicon.ico"
