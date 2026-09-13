@@ -133,6 +133,11 @@ ${JSON.stringify(draft, null, 1)}
 口播:"${clip.text}"
 画面简报:${clip.visual || "(无,自行设计)"}${assetBlock}
 
+底色主题(按内容调性选;她批注点名换底色必须换):
+- paper(暖纸感,明亮):情感/温暖/女性向/生活内容
+- dark(暗色编辑风):严肃/数据/科技/揭秘
+- gradient(活力渐变):开头钩子/活泼节奏
+- 全片可混用,但相邻两拍别剧烈跳色;同一片子最多 2 套主题
 卡型选择(按内容选,别惯性):
 - 关系/相互作用(A 生 B、X 克 Y、双方匹配) → diagram(节点+带标签箭头)
 - 两方/多方多项对照(他的 vs 你的,旧 vs 新) → table(对照表)
@@ -141,6 +146,7 @@ ${JSON.stringify(draft, null, 1)}
 - 纯文字大字卡(text)只兜底——知识内容不许用 text 糊弄;每一拍的信息量要顶得上一段话
 脚本建议的类型不合适就换对的。返回 JSON:
 {
+  "theme": "dark|paper|gradient 之一(底色主题)",
   "type": "text|data|quote|contrast|step|diagram|table|flow 之一",
   "kicker": "顶部小字标签(≤12字,可空)",
   "big": "主标题/主信息(≤10字;data=数字本体;table/flow=这一表的标题)",

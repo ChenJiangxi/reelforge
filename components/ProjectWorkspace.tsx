@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChatPanel, type ChatMessage } from "@/components/ChatPanel";
 import { PreviewPane, type ClipThumb, type StageView } from "@/components/PreviewPane";
 import { stageLabel } from "@/lib/stages";
@@ -36,6 +36,25 @@ export function ProjectWorkspace({
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const awaiting = stages.find((s) => s.status === "awaiting_review");
+
+  // 聊天/预览分栏宽度可拖(双击复位;拖动范围 280–560px)
+  const [chatW, setChatW] = useState(360);
+  const drag = useRef<{ startX: number; startW: number } | null>(null);
+  const onHandleDown = (e: React.PointerEvent) => {
+    drag.current = { startX: e.clientX, startW: chatW };
+    const move = (ev: PointerEvent) => {
+      if (!drag.current) return;
+      const w = drag.current.startW + (ev.clientX - drag.current.startX);
+      setChatW(Math.min(560, Math.max(280, Math.round(w))));
+    };
+    const up = () => {
+      drag.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
 
   return (
     <>
@@ -75,11 +94,23 @@ export function ProjectWorkspace({
         })}
       </div>
 
-      <div className="editor-grid">
-        <div className="order-2 lg:order-1">
-          <ChatPanel projectId={projectId} messages={messages} />
+      <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
+        <div className="order-2 min-h-0 lg:order-1 lg:shrink-0">
+          <div className="hidden h-full lg:block" style={{ width: chatW }}>
+            <ChatPanel projectId={projectId} messages={messages} />
+          </div>
+          <div className="lg:hidden">
+            <ChatPanel projectId={projectId} messages={messages} />
+          </div>
         </div>
-        <div className="order-1 lg:order-2">
+        {/* 拖拽分隔条(桌面端) */}
+        <div
+          onPointerDown={onHandleDown}
+          onDoubleClick={() => setChatW(360)}
+          title="拖动调整聊天区宽度,双击复位"
+          className="order-2 hidden w-1.5 shrink-0 cursor-col-resize self-stretch rounded-full bg-border/60 hover:bg-accent/50 lg:block"
+        />
+        <div className="order-1 min-h-0 flex-1 lg:order-3">
           <PreviewPane
             stages={stages}
             clips={clips}
