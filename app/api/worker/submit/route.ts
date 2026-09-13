@@ -24,6 +24,20 @@ export async function POST(req: NextRequest) {
   const stage = await prisma.stage.findUnique({ where: { id: stageId } });
   if (!stage) return NextResponse.json({ error: "not found" }, { status: 404 });
 
+  // 竞态守卫:worker 跑到一半时她又在聊天里改了东西(阶段已被重置成 pending/
+  // changes_requested)——这次提交的产物是按旧输入做的,作废,重跑。
+  if (stage.status !== "working") {
+    await prisma.stage.update({ where: { id: stageId }, data: { status: "pending" } });
+    await prisma.message.create({
+      data: {
+        projectId: stage.projectId,
+        role: "agent",
+        text: `「${stageLabel(stage.kind)}」刚跑完的那版是按你改之前的需求做的,作废了。正在按最新要求重出。`,
+      },
+    });
+    return NextResponse.json({ ok: true, stale: true });
+  }
+
   let merged = stage.artifacts ? JSON.parse(stage.artifacts) : {};
   if (artifacts && typeof artifacts === "object") merged = { ...merged, ...artifacts };
 

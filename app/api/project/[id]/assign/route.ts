@@ -29,8 +29,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   });
 
   const fromOrder = STAGE_ORDER.indexOf("footage");
-  for (const s of project.stages) {
-    if (s.order >= fromOrder && s.status !== "working") {
+  // 连 working 中的阶段也翻回 pending:submit 的竞态守卫会作废它按旧输入产出的结果
+    for (const s of project.stages) {
+    if (s.order >= fromOrder) {
       await prisma.stage.update({ where: { id: s.id }, data: { status: "pending" } });
     }
   }

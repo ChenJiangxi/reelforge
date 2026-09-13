@@ -121,8 +121,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const resetFrom = footageDirty ? "footage" : voiceDirty ? "voice" : null;
     if (resetFrom) {
       const fromOrder = STAGE_ORDER.indexOf(resetFrom as (typeof STAGE_ORDER)[number]);
-      for (const s of project.stages) {
-        if (s.order >= fromOrder && s.status !== "working") {
+      // 连 working 中的阶段也翻回 pending:submit 的竞态守卫会作废它按旧输入产出的结果
+    for (const s of project.stages) {
+        if (s.order >= fromOrder) {
           // Keep old artifacts: the previous cut stays watchable while the new
           // one renders, and footage reuses unchanged card designs from them.
           await prisma.stage.update({ where: { id: s.id }, data: { status: "pending" } });
@@ -148,7 +149,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // downstream of a redo goes stale → re-run after it (keep artifacts: old
     // version stays watchable while the new one renders)
     for (const s of project.stages) {
-      if (s.order > stage.order && s.status !== "working") {
+      if (s.order > stage.order) {
         await prisma.stage.update({ where: { id: s.id }, data: { status: "pending" } });
       }
     }
