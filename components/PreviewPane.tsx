@@ -282,7 +282,7 @@ function ScriptEditor({ stage, projectId }: { stage: StageView; projectId: strin
             setDraft(text);
             setEditing(true);
           }}
-          className="absolute right-3 top-3 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground opacity-0 shadow-xs transition group-hover:opacity-100 hover:border-foreground/30 hover:text-foreground"
+          className="absolute right-3 top-3 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground shadow-xs transition hover:border-foreground/30 hover:text-foreground"
         >
           ✎ 直接改
         </button>
@@ -291,15 +291,14 @@ function ScriptEditor({ stage, projectId }: { stage: StageView; projectId: strin
   }
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto flex h-full max-w-3xl flex-col">
       <textarea
         autoFocus
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        rows={Math.min(24, Math.max(10, draft.split("\n").length + 2))}
-        className="w-full resize-none rounded-lg border border-accent/50 bg-card p-5 text-sm leading-[1.8] outline-none focus:border-accent"
+        className="min-h-0 flex-1 w-full resize-none overflow-y-auto rounded-lg border border-accent/50 bg-card p-5 text-sm leading-[1.8] outline-none focus:border-accent"
       />
-      <div className="mt-2 flex items-center gap-2">
+      <div className="mt-2 flex shrink-0 items-center gap-2">
         <button
           onClick={save}
           disabled={busy || !draft.trim()}
