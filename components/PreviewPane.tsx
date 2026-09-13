@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { stageLabel, type Artifacts, type Comment } from "@/lib/stages";
 
@@ -22,6 +22,7 @@ export function PreviewPane({
   aspect,
   audio,
   wave,
+  subs = [],
   selectedId,
   onSelect,
   projectId,
@@ -31,6 +32,7 @@ export function PreviewPane({
   aspect: string;
   audio?: string;
   wave?: string;
+  subs?: { text: string; start: number; end: number }[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   projectId: string;
@@ -87,7 +89,7 @@ export function PreviewPane({
       </div>
 
       {showTracks && (
-        <Tracks clips={clips} wave={wave} audio={audio} vertical={vertical} onSelect={undefined} />
+        <Tracks clips={clips} wave={wave} audio={audio} subs={subs} vertical={vertical} />
       )}
 
       {isAwaiting && <GateBar stageId={view.id} onDone={() => onSelect(null)} />}
@@ -182,17 +184,7 @@ function StageArtifact({
       </div>
     );
   } else if (a.video) {
-    body = (
-      <div className="flex h-full items-center justify-center">
-        <video
-          key={a.video}
-          controls
-          autoPlay={stage.status === "awaiting_review"}
-          className={`rounded-md border border-border bg-black ${vertical ? "max-h-full w-auto" : "w-full max-w-3xl"}`}
-          src={a.video}
-        />
-      </div>
-    );
+    body = <VideoWithBeatRail stage={stage} vertical={vertical} clips={clips} />;
   } else if (stage.kind === "deliver") {
     body = (
       <div className="mx-auto flex max-w-3xl flex-wrap items-start justify-center gap-4">
@@ -300,20 +292,87 @@ function ScriptEditor({ stage, projectId }: { stage: StageView; projectId: strin
   );
 }
 
+// ── 视频 + 节拍导航栏:填满视频右侧死区,点哪拍跳哪拍 ──
+
+function VideoWithBeatRail({
+  stage,
+  vertical,
+  clips,
+}: {
+  stage: StageView;
+  vertical: boolean;
+  clips: ClipThumb[];
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const GAP = 0.25;
+  const offsets: number[] = [];
+  {
+    let t = 0;
+    for (const c of clips) {
+      offsets.push(t);
+      t += (c.dur ?? 0) + GAP;
+    }
+  }
+  const seek = (i: number) => {
+    const v = videoRef.current;
+    if (v) {
+      v.currentTime = offsets[i] ?? 0;
+      v.play().catch(() => {});
+    }
+  };
+
+  return (
+    <div className="flex h-full items-stretch justify-center gap-3">
+      <video
+        ref={videoRef}
+        key={stage.artifacts.video}
+        controls
+        autoPlay={stage.status === "awaiting_review"}
+        className={`rounded-md border border-border bg-black ${vertical ? "max-h-full w-auto" : "w-full max-w-3xl"}`}
+        src={stage.artifacts.video}
+      />
+      {vertical && clips.length > 0 && (
+        <div className="hidden w-52 shrink-0 flex-col overflow-y-auto rounded-md border border-border bg-card lg:flex">
+          <div className="border-b border-border px-3 py-2 text-[11px] font-medium text-muted-foreground">
+            节拍 · 点击跳转
+          </div>
+          <div className="min-h-0 flex-1 divide-y divide-border/60 overflow-y-auto">
+            {clips.map((c, i) => (
+              <button
+                key={c.name}
+                onClick={() => seek(i)}
+                className="block w-full px-3 py-2 text-left hover:bg-muted/70"
+                title={c.text}
+              >
+                <span className="font-mono text-[10px] text-accent">
+                  {String(i + 1).padStart(2, "0")} {c.dur != null ? `${(offsets[i]).toFixed(1)}s` : ""}
+                </span>
+                <span className="mt-0.5 line-clamp-2 block text-xs leading-snug text-foreground/85">{c.text}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── tracks (cut view only) ──
 
 function Tracks({
   clips,
   wave,
   audio,
+  subs = [],
   vertical,
 }: {
   clips: ClipThumb[];
   wave?: string;
   audio?: string;
+  subs?: { text: string; start: number; end: number }[];
   vertical: boolean;
-  onSelect?: undefined;
 }) {
+  const total = subs.length ? Math.max(...subs.map((s) => s.end)) : 0;
   return (
     <div className="space-y-2 border-t border-border p-3">
       {clips.some((c) => c.image) && (
@@ -356,6 +415,25 @@ function Tracks({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={wave} alt="配音波形" className="h-full w-full object-fill opacity-90" />
           </button>
+        </div>
+      )}
+      {subs.length > 0 && (
+        <div className="flex items-center gap-2">
+          <div className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded bg-muted font-mono text-[10px] text-muted-foreground">
+            字幕
+          </div>
+          <div className="relative h-10 min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-muted/60">
+            {subs.map((s, i) => (
+              <div
+                key={i}
+                title={s.text}
+                className="absolute top-1.5 flex h-7 items-center overflow-hidden rounded-sm bg-accent/15 px-1 text-[10px] text-accent"
+                style={{ left: `${(s.start / total) * 100}%`, width: `${((s.end - s.start) / total) * 100}%` }}
+              >
+                <span className="truncate">{s.text}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

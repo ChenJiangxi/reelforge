@@ -61,6 +61,7 @@ export type Artifacts = {
   clips?: { name: string; text: string; visual?: string }[];
   cards?: { name: string; text?: string; type?: string; kicker?: string; big?: string; sub?: string; foot?: string }[];
   voiceMeta?: { clips: { name: string; text: string; dur: number }[]; gap?: number };
+  subs?: { text: string; start: number; end: number }[];
   topic?: { angle?: string; hook?: string; claims?: string[]; avoid?: string[]; title?: string };
 };
 

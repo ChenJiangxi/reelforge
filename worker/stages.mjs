@@ -368,7 +368,7 @@ async function subtitles(item) {
       const seg = (m.dur * l.length) / tot;
       const png = join(dir, `line-${String(overlays.length).padStart(3, "0")}.png`);
       await renderSubLine(l, size, png);
-      overlays.push({ png, start: t, end: t + seg });
+      overlays.push({ png, text: l, start: t, end: t + seg });
       t += seg;
     }
     offset += m.dur + gap;
@@ -387,7 +387,11 @@ async function subtitles(item) {
   await ffmpeg(["-i", local, ...inputs, "-filter_complex", chain, "-map", "[vout]", "-map", "0:a", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "copy", out]);
   console.log("  [subtitles] uploading subs.mp4…");
   const { url } = await upload(item.projectId, out, "subs.mp4");
-  return { video: url, note: `字幕已烧录(${overlays.length} 行)。错字/断句/位置请审。` };
+  return {
+    video: url,
+    subs: overlays.map((o) => ({ text: o.text, start: o.start, end: o.end })),
+    note: `字幕已烧录(${overlays.length} 行)。错字/断句/位置请审。`,
+  };
 }
 
 async function polish(item) {

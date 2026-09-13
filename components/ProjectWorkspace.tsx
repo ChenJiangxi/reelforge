@@ -23,6 +23,7 @@ export function ProjectWorkspace({
   aspect,
   audio,
   wave,
+  subs = [],
 }: {
   projectId: string;
   stages: StageView[];
@@ -31,6 +32,7 @@ export function ProjectWorkspace({
   aspect: string;
   audio?: string;
   wave?: string;
+  subs?: { text: string; start: number; end: number }[];
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const awaiting = stages.find((s) => s.status === "awaiting_review");
@@ -84,6 +86,7 @@ export function ProjectWorkspace({
             aspect={aspect}
             audio={audio}
             wave={wave}
+            subs={subs}
             selectedId={selectedId}
             onSelect={setSelectedId}
             projectId={projectId}

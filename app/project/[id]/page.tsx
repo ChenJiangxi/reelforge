@@ -43,6 +43,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const script = artOf("script");
   const footage = artOf("footage");
   const voice = artOf("voice");
+  const subs = artOf("subtitles").subs ?? [];
 
   const clips: ClipThumb[] = (script.clips ?? []).map(
     (c: { name: string; text: string }, i: number) => ({
@@ -94,6 +95,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         aspect={project.aspect}
         audio={voice.audio}
         wave={voice.wave}
+        subs={subs}
       />
     </div>
   );
