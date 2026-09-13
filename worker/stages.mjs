@@ -2,10 +2,10 @@
 // artifacts) and returns the artifacts patch to submit for review.
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { chatJSON, reviewImage } from "./llm.mjs";
+import { chatJSON, reviewImage, reviewFrames } from "./llm.mjs";
 import { PROMPTS } from "./prompts.mjs";
 import { renderCard, renderSubLine, sizeFor, closeBrowser } from "./cards.mjs";
-import { ffmpeg, ffprobeDur } from "./ffmpeg.mjs";
+import { ffmpeg, ffprobeDur, ffprobeInfo, ffmpegOut } from "./ffmpeg.mjs";
 import { upload, download } from "./board.mjs";
 
 const WORK_ROOT = process.env.WORK_DIR || join(process.cwd(), "data", "work");
@@ -397,9 +397,58 @@ async function subtitles(item) {
 async function polish(item) {
   const video = item.upstream?.subtitles?.video || item.upstream?.edit?.video;
   if (!video) throw new Error("上游没有成片视频");
+
+  // ── 成片自动体检(学 MuseDock visualQaService):画幅/时长/黑屏/冻结/抽帧总评 ──
+  const dir = workDir(item, "polish");
+  const local = join(dir, "final.mp4");
+  if (!existsSync(local)) await download(video, local);
+  const qa = { issues: [] };
+  try {
+    const info = await ffprobeInfo(local);
+    const dur = Number(info.format?.duration || 0);
+    const stream = (info.streams || []).find((s) => s.codec_type === "video") || {};
+    qa.durationSec = Math.round(dur * 10) / 10;
+    qa.targetSec = item.duration;
+    qa.deviationPct = Math.round((Math.abs(dur - item.duration) / item.duration) * 100);
+    const wantW = item.aspect === "16:9" ? 1920 : 1080;
+    const wantH = item.aspect === "16:9" ? 1080 : item.aspect === "3:4" ? 1440 : 1920;
+    qa.aspectOk = Number(stream.width) === wantW && Number(stream.height) === wantH;
+    if (!qa.aspectOk) qa.issues.push(`画幅 ${stream.width}x${stream.height},应为 ${wantW}x${wantH}`);
+    if (qa.deviationPct > 25) qa.issues.push(`时长偏离目标 ${qa.deviationPct}%(>${25}%)`);
+
+    const black = await ffmpegOut(["-i", local, "-vf", "blackdetect=d=0.6:pix_th=0.10", "-an", "-f", "null", "-"]);
+    qa.blackIntervals = (black.match(/black_start:/g) || []).length;
+    if (qa.blackIntervals > 0) qa.issues.push(`检测到 ${qa.blackIntervals} 段疑似黑屏(>0.6s)`);
+
+    const freeze = await ffmpegOut(["-i", local, "-vf", "freezedetect=n=-60dB:d=2", "-an", "-f", "null", "-"]);
+    qa.freezeIntervals = (freeze.match(/freeze_start:/g) || []).length;
+    if (qa.freezeIntervals > 0) qa.issues.push(`检测到 ${qa.freezeIntervals} 段画面冻结(>2s)`);
+
+    // 抽 3 帧给视觉模型做总评
+    const picks = [0.15, 0.5, 0.85];
+    const frames = [];
+    for (let i = 0; i < picks.length; i++) {
+      const f = join(dir, `qa-f${i}.png`);
+      await ffmpeg(["-ss", String(Math.max(0.1, dur * picks[i])), "-i", local, "-frames:v", "1", f]);
+      frames.push(f);
+    }
+    const vision = await reviewFrames(
+      frames,
+      "这是一条短视频成片的 3 个抽样帧(开头/中间/结尾)。总评:1)有没有明显翻车(黑屏/花屏/文字糊成一团) 2)画面是否像真人认真剪的(有信息结构),还是敷衍的模板感 3)帧之间风格是否一致",
+    );
+    qa.vision = vision;
+    if (!vision.ok) qa.issues.push(...(vision.issues || []));
+  } catch (e) {
+    qa.error = e.message;
+  }
+  const qaLine = qa.error
+    ? `体检没跑成:${qa.error}`
+    : `体检:${qa.aspectOk ? "画幅✓" : "画幅✗"} · ${qa.durationSec}s/目标${qa.targetSec}s(偏差${qa.deviationPct}%) · 黑屏${qa.blackIntervals} · 冻结${qa.freezeIntervals} · AI总评${qa.vision?.ok === false ? "有问题" : "通过"}`;
+
   return {
     video,
-    note: "成片完成。要微调(节奏/某句/某画面)就打回写批注;满意就通过,进入交付打包。",
+    qa,
+    note: `${qaLine}\n要微调(节奏/某句/某画面)就打回写批注;满意就通过,进入交付打包。${qa.issues.length ? "\n⚠ " + qa.issues.join(" / ") : ""}`,
   };
 }
 

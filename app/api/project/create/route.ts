@@ -12,6 +12,7 @@ export async function POST(req: NextRequest) {
   const platform = platformForAspect(aspect);
   const title = String(body.title ?? "").trim() || (topic ? topic.slice(0, 28) : "未命名项目");
   const voice = VOICE_OPTIONS.some((o) => o.value === body.voice) ? body.voice : "clone-zh";
+  const material = String(body.material ?? "").trim().slice(0, 8000);
   const bgm = body.bgm === "yes" ? "yes" : "none";
   const duration = Math.min(180, Math.max(30, parseInt(body.duration, 10) || 75));
   if (!topic) return NextResponse.json({ error: "请先填一句主题" }, { status: 400 });

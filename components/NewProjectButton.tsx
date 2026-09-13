@@ -13,6 +13,7 @@ export function NewProjectButton() {
   const [voice, setVoice] = useState("clone-zh");
   const [bgm, setBgm] = useState("none");
   const [duration, setDuration] = useState("75");
+  const [material, setMaterial] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -24,7 +25,7 @@ export function NewProjectButton() {
       const r = await fetch("/api/project/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic, title, voice, bgm, aspect, duration }),
+        body: JSON.stringify({ topic, title, voice, bgm, aspect, duration, material }),
       });
       const d = await r.json();
       if (r.ok && d.id) {
@@ -65,6 +66,17 @@ export function NewProjectButton() {
           onChange={(e) => setTopic(e.target.value)}
           placeholder="一句话说清,比如:年轻人为什么开始信八字"
           rows={3}
+          className={`${fieldCls} resize-none`}
+        />
+      </div>
+
+      <div className="mb-3">
+        <label className={labelCls}>参考材料(可选——真素材不吹牛靠它)</label>
+        <textarea
+          value={material}
+          onChange={(e) => setMaterial(e.target.value)}
+          placeholder="粘贴文章/数据/资料原文,选题和脚本会基于它写,不瞎编"
+          rows={2}
           className={`${fieldCls} resize-none`}
         />
       </div>

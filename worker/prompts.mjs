@@ -34,6 +34,7 @@ export const PROMPTS = {
       role: "user",
       content: `原始想法:${item.topic}
 平台:${item.platform === "bilibili" ? "B站横版" : "抖音竖版"},目标时长 ~${item.duration} 秒。
+${item.artifacts?.material ? `\n参考材料(真实资料,内容优先从这里出,别自己编):\n${item.artifacts.material}\n` : ""}
 
 把这个想法收束成一个能拍的选题。返回 JSON(不要多余文字):
 {
@@ -70,6 +71,7 @@ ${TASTE}
     {
       role: "user",
       content: `选题角度:${topic.angle}
+${topic.material ? `参考材料(真实资料,数字/案例从这里出):\n${topic.material}\n` : ""}
 开场钩子方向:${topic.hook}
 要讲的判断:${(topic.claims || []).join(" / ")}
 绝不能吹:${(topic.avoid || []).join(" / ")}

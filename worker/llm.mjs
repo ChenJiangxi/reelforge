@@ -68,3 +68,20 @@ export async function reviewImage(pngPath, checklist) {
   if (!m) return { ok: true, issues: [] }; // 审稿失败不当阻塞
   try { return JSON.parse(m[0]); } catch { return { ok: true, issues: [] }; }
 }
+
+// Multi-frame overall review — for the final-cut QA (学 MuseDock visualQaService
+// 的抽样帧总评,但我们一次调用看 3 帧,省 token)。
+export async function reviewFrames(pngPaths, checklist) {
+  const { readFileSync } = await import("node:fs");
+  const content = [
+    { type: "text", text: checklist + '\n\n返回 JSON:{"ok":true|false,"issues":["问题1"]}。' },
+    ...pngPaths.map((p) => ({
+      type: "image_url",
+      image_url: { url: `data:image/png;base64,${readFileSync(p).toString("base64")}` },
+    })),
+  ];
+  const text = await chat([{ role: "user", content }], { model: VISION_MODEL, temperature: 0.1, maxTokens: 1000 });
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return { ok: true, issues: [] };
+  try { return JSON.parse(m[0]); } catch { return { ok: true, issues: [] }; }
+}
