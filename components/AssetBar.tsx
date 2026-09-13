@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 export type Asset = { name: string; url: string; kind: string; size: number };
 
 // 项目素材库:上传录屏/图片,管线做素材阶段时会挑着用(或聊天里指定)。
-export function AssetBar({ projectId, assets }: { projectId: string; assets: Asset[] }) {
+export function AssetBar({ projectId, assets, compact = false }: { projectId: string; assets: Asset[]; compact?: boolean }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -23,6 +23,22 @@ export function AssetBar({ projectId, assets }: { projectId: string; assets: Ass
       setBusy(false);
       if (inputRef.current) inputRef.current.value = "";
     }
+  }
+
+  if (compact) {
+    return (
+      <span className="flex shrink-0 items-center gap-2">
+        <span className="text-xs text-muted-foreground">素材库 {assets.length > 0 ? `(${assets.length})` : ""}</span>
+        <input ref={inputRef} type="file" accept="video/*,image/*" multiple className="hidden" onChange={(e) => upload(e.target.files)} />
+        <button
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+          className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:border-foreground/30 hover:text-foreground disabled:opacity-40"
+        >
+          {busy ? "上传中…" : "+ 上传"}
+        </button>
+      </span>
+    );
   }
 
   return (

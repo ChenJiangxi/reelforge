@@ -69,23 +69,19 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="project-shell max-w-[1600px]">
-      <a href="/" className="text-sm text-muted-foreground hover:text-foreground">
-        ← 全部项目
-      </a>
-      <div className="mt-2 mb-1.5 flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">{project.title}</h1>
+      {/* 头部一行:返回 + 标题 + 状态 + 设置 + 素材入口,全在一行,不占工作区 */}
+      <div className="mb-1.5 flex shrink-0 items-center gap-3">
+        <a href="/" className="shrink-0 text-sm text-muted-foreground hover:text-foreground">←</a>
+        <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">{project.title}</h1>
         <StatusBadge status={project.status} />
+        <span className="hidden shrink-0 font-mono text-[11px] text-muted-foreground md:inline">
+          {settings.join(" · ")}
+        </span>
+        <span className="ml-auto flex shrink-0 items-center gap-2">
+          <AssetBar projectId={project.id} assets={assets} compact />
+        </span>
       </div>
-      <p className="mb-2 text-sm text-muted-foreground">{project.topic}</p>
-      <div className="mb-4 flex flex-wrap gap-1.5">
-        {settings.map((s) => (
-          <span key={s} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-            {s}
-          </span>
-        ))}
-      </div>
-
-      <AssetBar projectId={project.id} assets={assets} />
+      <p className="mb-2 shrink-0 truncate text-xs text-muted-foreground" title={project.topic}>{project.topic}</p>
 
       <ProjectWorkspace
         projectId={project.id}
