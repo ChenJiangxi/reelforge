@@ -43,5 +43,7 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image).*)"],
+  // /api/worker/* 不进 proxy:proxy 会把请求体克隆成流(默认 10MB 截断),
+  // worker 上传的成片/动画卡动辄 15-40MB,会被截成坏 multipart
+  matcher: ["/((?!_next/static|_next/image|api/worker).*)"],
 };
