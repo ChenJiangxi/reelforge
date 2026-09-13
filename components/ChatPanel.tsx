@@ -59,17 +59,17 @@ export function ChatPanel({
   }
 
   return (
-    <div className="flex h-full min-h-[50vh] min-h-0 flex-col rounded-lg border border-border bg-card shadow-xs">
-      <div className="border-b border-border px-4 py-3">
+    <div className="flex h-full min-h-[50vh] min-h-0 flex-col">
+      <div className="border-b border-border/70 px-4 py-3">
         <div className="text-sm font-semibold">对话剪辑</div>
         <div className="mt-1 text-xs text-muted-foreground">
           直接说:把第3句改成… / 删掉第5句 / 封面换一版
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
         {messages.length === 0 && pending.length === 0 && (
-          <div className="rounded-lg bg-muted p-3 text-[13px] leading-relaxed text-muted-foreground">
+          <div className="rounded-lg bg-muted/60 p-3 text-[13px] leading-relaxed text-muted-foreground">
             这就是 chatcut 那个聊天框。改词、删句、调画面、换封面,直接打字;
             agent 改完会重配音、重剪,右侧预览自动更新。
           </div>
@@ -80,7 +80,7 @@ export function ChatPanel({
               className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
                 m.role === "user"
                   ? "rounded-br-sm bg-foreground text-background"
-                  : "rounded-bl-sm bg-muted text-foreground"
+                  : "rounded-bl-sm bg-muted/70 text-foreground"
               }`}
             >
               {m.text}
@@ -90,7 +90,7 @@ export function ChatPanel({
         <div ref={bottomRef} />
       </div>
 
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border/70 p-3">
         <div className="flex items-end gap-2">
           <textarea
             value={text}
@@ -103,7 +103,7 @@ export function ChatPanel({
             }}
             placeholder="说一句修改…"
             rows={1}
-            className="max-h-28 min-h-10 flex-1 resize-none rounded-full border border-border bg-background px-4 py-2 text-sm outline-none focus:border-accent/60"
+            className="max-h-28 min-h-10 flex-1 resize-none rounded-full bg-muted/70 px-4 py-2 text-sm outline-none focus:border-accent/60"
           />
           <button
             onClick={send}

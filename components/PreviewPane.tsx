@@ -80,15 +80,15 @@ export function PreviewPane({
 
   if (!view) {
     return (
-      <div className="flex h-full items-center justify-center rounded-lg border border-border bg-card text-sm text-muted-foreground">
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
         还没有内容
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col rounded-lg border border-border bg-card shadow-xs">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
         <span className="text-sm font-semibold">{stageLabel(view.kind)}</span>
         <div className="flex items-center gap-2">
           {isAwaiting && (
@@ -114,7 +114,7 @@ export function PreviewPane({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-muted/50 p-3">
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
         <StageArtifact stage={view} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} dropProps={dropProps} over={over} />
       </div>
 
@@ -411,8 +411,8 @@ function VideoWithBeatRail({
         src={stage.artifacts.video}
       />
       {vertical && clips.length > 0 && (
-        <div className="hidden w-52 shrink-0 flex-col overflow-y-auto rounded-md border border-border bg-card lg:flex">
-          <div className="border-b border-border px-3 py-2 text-[11px] font-medium text-muted-foreground">
+        <div className="hidden w-52 shrink-0 flex-col overflow-y-auto lg:flex">
+          <div className="border-b border-border/70 px-3 py-2 text-[11px] font-medium text-muted-foreground">
             节拍 · 点击跳转
           </div>
           <div className="min-h-0 flex-1 divide-y divide-border/60 overflow-y-auto">
@@ -458,10 +458,10 @@ function Tracks({
 }) {
   const total = subs.length ? Math.max(...subs.map((s) => s.end)) : 0;
   return (
-    <div className="space-y-2 border-t border-border p-3">
+    <div className="space-y-2 border-t border-border/70 p-3">
       {clips.some((c) => c.image) && (
         <div className="flex items-stretch gap-2">
-          <div className="flex w-10 shrink-0 flex-col items-center justify-center rounded bg-muted font-mono text-[10px] text-muted-foreground">
+          <div className="flex w-10 shrink-0 flex-col items-center justify-center font-mono text-[10px] text-muted-foreground">
             画面
           </div>
           <div className="flex gap-2 overflow-x-auto pb-1">
@@ -489,7 +489,7 @@ function Tracks({
       )}
       {wave && (
         <div className="flex items-center gap-2">
-          <div className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded bg-muted font-mono text-[10px] text-muted-foreground">
+          <div className="flex h-10 w-10 shrink-0 flex-col items-center justify-center font-mono text-[10px] text-muted-foreground">
             配音
           </div>
           <button
@@ -504,7 +504,7 @@ function Tracks({
       )}
       {subs.length > 0 && (
         <div className="flex items-center gap-2">
-          <div className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded bg-muted font-mono text-[10px] text-muted-foreground">
+          <div className="flex h-10 w-10 shrink-0 flex-col items-center justify-center font-mono text-[10px] text-muted-foreground">
             字幕
           </div>
           <div className="relative h-10 min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-muted/60">
@@ -552,7 +552,7 @@ function GateBar({ stageId, onDone }: { stageId: string; onDone: () => void }) {
   }
 
   return (
-    <div className="border-t border-accent/25 bg-accent-soft/50 p-3">
+    <div className="border-t border-border/70 bg-accent-soft/40 p-3">
       {rejecting && (
         <div className="mb-2">
           <textarea

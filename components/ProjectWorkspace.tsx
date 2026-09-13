@@ -59,7 +59,7 @@ export function ProjectWorkspace({
   return (
     <>
       {/* stepper = stage selector */}
-      <div className="mb-3 flex shrink-0 items-center rounded-lg border border-border bg-card px-4 py-2.5">
+      <div className="mb-2 flex shrink-0 items-center border-b border-border/70 px-2 py-2.5">
         {stages.map((s, i) => {
           const selected = selectedId === s.id || (selectedId === null && awaiting?.id === s.id);
           return (

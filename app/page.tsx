@@ -37,7 +37,7 @@ export default async function Home() {
             <Link
               key={p.id}
               href={`/project/${p.id}`}
-              className="group rounded-lg border border-border bg-card p-4 shadow-xs hover:border-foreground/20"
+              className="group rounded-lg bg-card p-4 hover:bg-muted/70"
             >
               <div className="mb-2 flex items-center gap-2">
                 <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
@@ -68,7 +68,7 @@ export default async function Home() {
           );
         })}
         {projects.length === 0 && (
-          <div className="col-span-full rounded-lg border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+          <div className="col-span-full rounded-lg bg-muted/40 px-6 py-16 text-center">
             <div className="mb-1 text-sm font-medium">还没有项目</div>
             <div className="text-sm text-muted-foreground">
               点右上角「+ 新建项目」，一句话说清主题，剩下的交给管线。

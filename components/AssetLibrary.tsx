@@ -50,7 +50,7 @@ export function AssetLibrary({ assets }: { assets: Asset[] }) {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {assets.map((a) => (
-          <div key={a.name} className="overflow-hidden rounded-lg border border-border bg-card">
+          <div key={a.name} className="overflow-hidden rounded-lg bg-muted/40">
             {a.kind === "video" ? (
               <video src={a.url} controls preload="metadata" className="aspect-video w-full bg-black object-cover" />
             ) : (
@@ -67,7 +67,7 @@ export function AssetLibrary({ assets }: { assets: Asset[] }) {
           </div>
         ))}
         {assets.length === 0 && (
-          <div className="col-span-full rounded-lg border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+          <div className="col-span-full rounded-lg bg-muted/40 px-6 py-16 text-center">
             <div className="mb-1 text-sm font-medium">素材库是空的</div>
             <div className="text-sm text-muted-foreground">
               传产品录屏、实拍图、封面图——素材阶段会按内容自动挑用。
