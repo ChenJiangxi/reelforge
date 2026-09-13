@@ -29,7 +29,7 @@ export function AssetBar({ projectId, assets, compact = false }: { projectId: st
     return (
       <span className="flex shrink-0 items-center gap-2">
         <span className="flex items-center gap-1">
-          {assets.slice(0, 4).map((a) =>
+          {assets.slice(0, 6).map((a) =>
             a.kind === "video" ? (
               <span
                 key={a.name}
@@ -53,9 +53,9 @@ export function AssetBar({ projectId, assets, compact = false }: { projectId: st
               />
             ),
           )}
-          {assets.length > 4 && <span className="text-[10px] text-muted-foreground">+{assets.length - 4}</span>}
+          {assets.length > 6 && <span className="text-[10px] text-muted-foreground">+{assets.length - 6}</span>}
         </span>
-        <span className="text-xs text-muted-foreground">素材库{assets.length > 4 ? `(${assets.length})` : ""}</span>
+        <span className="text-xs text-muted-foreground">素材库{assets.length > 6 ? `(${assets.length})` : ""}</span>
         <input ref={inputRef} type="file" accept="video/*,image/*" multiple className="hidden" onChange={(e) => upload(e.target.files)} />
         <button
           onClick={() => inputRef.current?.click()}

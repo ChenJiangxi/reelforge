@@ -54,18 +54,21 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     }),
   );
 
-  // 素材库(录屏/图片),扫盘得来
-  const assetsDir = path.join(MEDIA_DIR, project.id, "assets");
-  let assetFiles: string[] = [];
-  try { assetFiles = readdirSync(assetsDir); } catch { /* none */ }
-  const assets: Asset[] = assetFiles
-    .filter((f) => /\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)$/i.test(f))
-    .map((f) => ({
-      name: f,
-      url: `/api/media/${project.id}/assets/${encodeURIComponent(f)}`,
-      kind: /\.(mp4|mov|webm|m4v)$/i.test(f) ? "video" : "image",
-      size: statSync(path.join(assetsDir, f)).size,
-    }));
+  // 素材库(录屏/图片),扫盘得来:项目素材 + 全局共享素材,都可拖到节拍上
+  const readAssets = (id: string): Asset[] => {
+    const dir = path.join(MEDIA_DIR, id, "assets");
+    let files: string[] = [];
+    try { files = readdirSync(dir); } catch { return []; }
+    return files
+      .filter((f) => /\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)$/i.test(f))
+      .map((f) => ({
+        name: f,
+        url: `/api/media/${id}/assets/${encodeURIComponent(f)}`,
+        kind: /\.(mp4|mov|webm|m4v)$/i.test(f) ? "video" : "image",
+        size: statSync(path.join(dir, f)).size,
+      }));
+  };
+  const assets: Asset[] = [...readAssets(project.id), ...readAssets("_global")];
 
   return (
     <div className="project-shell max-w-[1600px]">
