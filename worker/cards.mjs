@@ -60,11 +60,15 @@ export function cardHTML({ kicker = "", big = "", sub = "", foot = "", type = "t
       </div>
       ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
   } else if (type === "contrast") {
+    const sideFont = (t) => {
+      const len = Math.max(1, String(t).length);
+      return Math.max(vertical ? 48 : 42, Math.min(vertical ? 110 : 88, Math.round((vertical ? 380 : 560) / len)));
+    };
     center = `
       <div class="versus">
-        <div class="side"><div class="side-big">${esc(big)}</div></div>
+        <div class="side"><div class="side-big" style="font-size:${sideFont(big)}px">${esc(big)}</div></div>
         <div class="vs">VS</div>
-        <div class="side alt"><div class="side-big">${esc(big2)}</div></div>
+        <div class="side alt"><div class="side-big" style="font-size:${sideFont(big2)}px">${esc(big2)}</div></div>
       </div>
       ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
   } else if (type === "step") {
@@ -118,7 +122,7 @@ body::before {
 .foot { position: absolute; left: 0; right: 0; bottom: ${Math.round(height * 0.2)}px; text-align: center; font-size: ${vertical ? 28 : 24}px; color: rgba(245,241,233,.38); letter-spacing: .1em; }
 .bar { width: ${vertical ? 96 : 80}px; height: 6px; border-radius: 3px; background: #e8b64c; margin: ${vertical ? "54px" : "40px"} auto 0; }
 .versus { display: flex; align-items: center; justify-content: center; gap: ${vertical ? 40 : 48}px; }
-.side { flex: 1; max-width: 42%; }
+.side { flex: 1; max-width: 44%; min-width: 0; overflow-wrap: anywhere; }
 .side-big { font-weight: 800; font-size: ${Math.round(bigSize * 0.55)}px; line-height: 1.2; color: rgba(245,241,233,.9); text-wrap: balance; }
 .side.alt .side-big { color: #e8b64c; }
 .vs { font-size: ${vertical ? 44 : 40}px; font-weight: 800; color: rgba(245,241,233,.35); letter-spacing: .1em; }

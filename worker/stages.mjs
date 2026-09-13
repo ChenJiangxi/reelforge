@@ -167,8 +167,10 @@ async function footage(item) {
     }
 
     const png = join(dir, `${clip.name}.png`);
-    // 视觉审稿循环(只对新设计):渲出来 → 视觉模型按教案挑毛病 → 有问题改内容重渲一次
+    // 视觉审稿循环(只对新设计):渲出来 → 视觉模型按教案挑毛病 → 有问题改内容重渲。
+    // 最后一关是硬闸:若 QA 仍说"知识内容用了纯文字卡",强制换结构化卡型。
     let passes = freshDesign ? 2 : 1;
+    let lastIssues = [];
     for (let pass = 1; pass <= passes; pass++) {
       await renderCard(content, size, png);
       if (!freshDesign) break;
@@ -176,15 +178,24 @@ async function footage(item) {
         png,
         `审这张短视频画面卡(口播:"${clip.text}")。清单:1)第一眼是否落在主信息上 2)文字有没有溢出/被裁切/挤出画面 3)底部 17% 字幕安全区有没有被占用 4)有没有错别字/多字漏字 5)卡内容和口播是否相关 6)信息量:如果这卡只有一句短话的大字、而这拍讲的是知识/关系/对比内容,就是不达标(该用关系图/对照表/步骤链)`,
       );
-      if (qa.ok || pass === passes) {
-        if (!qa.ok) console.log(`  [footage] ${clip.name} QA 仍有 issue(放行):${qa.issues?.join(";")}`);
-        break;
-      }
+      if (qa.ok || pass === passes) { lastIssues = qa.ok ? [] : qa.issues || []; break; }
       console.log(`  [footage] ${clip.name} QA 打回:${qa.issues?.join(";")} → 重设计`);
       content = await chatJSON(
         [...PROMPTS.card(item, clip, i, clips.length), { role: "user", content: `上一版被视觉审稿打回:${qa.issues?.join(";")}。针对问题改,返回同样结构的 JSON。` }],
         { temperature: 0.4 },
       );
+    }
+    // 硬闸:知识/关系/对比内容不许落在纯文字卡(开头钩子问句除外)
+    const isHook = (clip.beat || "") === "hook" || i === 0;
+    const infoIssue = lastIssues.some((x) => /信息量|大字|结构/.test(String(x)));
+    if (freshDesign && content && content.type === "text" && infoIssue && !isHook) {
+      console.log(`  [footage] ${clip.name} 硬闸:知识内容仍是 text 卡 → 强制结构化`);
+      content = await chatJSON(
+        [...PROMPTS.card(item, clip, i, clips.length), { role: "user", content: `两版了还是纯文字大字卡,不合格。禁止用 text,必须从 diagram / table / flow 里选一种,把这拍的关系/对照/流程画出来。返回同样结构的 JSON。` }],
+        { temperature: 0.3 },
+      );
+      if (content.type === "text") content.type = "diagram";
+      await renderCard(content, size, png);
     }
     console.log(`  [footage] ${clip.name} rendered, uploading`);
     const { url } = await upload(item.projectId, png, `card-${clip.name}.png`);
