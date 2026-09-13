@@ -114,8 +114,10 @@ ${JSON.stringify(draft, null, 1)}
 
   card: (item, clip, i, n) => {
     const assets = (item.assets || []).filter((a) => a.kind === "video" || a.kind === "image");
+    const mine = assets.filter((a) => !a.global);
+    const shared = assets.filter((a) => a.global);
     const assetBlock = assets.length
-      ? `\n\n项目素材库(她上传的真素材,能用就用——真素材永远比字卡好):\n${assets.map((a) => `- "${a.name}"(${a.kind === "video" ? "录屏视频" : "图片"})`).join("\n")}
+      ? `\n\n素材库(真素材,能用就用——真素材永远比字卡好):\n${mine.length ? `本项目上传:\n${mine.map((a) => `- "${a.name}"(${a.kind === "video" ? "录屏视频" : "图片"})`).join("\n")}\n` : ""}${shared.length ? `全局共享素材库:\n${shared.map((a) => `- "${a.name}"(${a.kind === "video" ? "录屏视频" : "图片"})`).join("\n")}` : ""}
 如果这一拍该用素材库里的某个素材(比如这拍在讲产品功能,正好有对应录屏),返回 {"asset": "文件名"} 而不是字卡设计。别把素材浪费在不相关的拍上;没有合适的就正常设计字卡。`
       : "";
     return [

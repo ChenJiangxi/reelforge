@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
       bgm: s.project.bgm,
       aspect: s.project.aspect,
       duration: s.project.duration,
-      assets: listAssets(s.projectId),
+      assets: [...listAssets(s.projectId), ...listAssets("_global").map((a) => ({ ...a, global: true }))],
       artifacts: s.artifacts ? JSON.parse(s.artifacts) : {},
       comment: s.status === "changes_requested" ? last?.text ?? null : null,
       upstream,

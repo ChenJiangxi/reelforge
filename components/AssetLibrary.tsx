@@ -1,0 +1,80 @@
+"use client";
+
+import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+
+type Asset = { name: string; url: string; kind: string; size: number };
+
+function fmtSize(n: number) {
+  return n > 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.round(n / 1024)}KB`;
+}
+
+export function AssetLibrary({ assets }: { assets: Asset[] }) {
+  const router = useRouter();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function upload(files: FileList | null) {
+    if (!files?.length || busy) return;
+    setBusy(true);
+    const form = new FormData();
+    for (const f of files) form.append("files", f);
+    try {
+      await fetch("/api/assets", { method: "POST", body: form });
+      router.refresh();
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  return (
+    <div>
+      <div className="mb-4">
+        <input
+          ref={inputRef}
+          type="file"
+          accept="video/*,image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => upload(e.target.files)}
+        />
+        <button
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+          className="rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
+        >
+          {busy ? "上传中…" : "+ 上传素材"}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {assets.map((a) => (
+          <div key={a.name} className="overflow-hidden rounded-lg border border-border bg-card">
+            {a.kind === "video" ? (
+              <video src={a.url} controls preload="metadata" className="aspect-video w-full bg-black object-cover" />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={a.url} alt={a.name} className="aspect-video w-full object-cover" />
+            )}
+            <div className="flex items-center justify-between gap-2 px-2.5 py-2">
+              <span className="truncate text-xs" title={a.name}>
+                {a.kind === "video" ? "🎬 " : ""}
+                {a.name}
+              </span>
+              <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{fmtSize(a.size)}</span>
+            </div>
+          </div>
+        ))}
+        {assets.length === 0 && (
+          <div className="col-span-full rounded-lg border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+            <div className="mb-1 text-sm font-medium">素材库是空的</div>
+            <div className="text-sm text-muted-foreground">
+              传产品录屏、实拍图、封面图——素材阶段会按内容自动挑用。
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -44,6 +44,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <Link href="/" className="block rounded-md bg-muted px-3 py-2.5 font-medium">
                 全部项目
               </Link>
+              <Link href="/assets" className="block rounded-md px-3 py-2.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground">
+                素材库
+              </Link>
               <div className="block cursor-default rounded-md px-3 py-2.5 text-muted-foreground/60">
                 数据反馈<span className="ml-1.5 text-[10px]">soon</span>
               </div>

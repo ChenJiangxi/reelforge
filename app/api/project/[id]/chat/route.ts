@@ -8,12 +8,15 @@ import { STAGE_ORDER, stageLabel } from "@/lib/stages";
 import { MEDIA_DIR } from "@/lib/media";
 
 function projectAssets(projectId: string): { name: string; kind: string }[] {
-  const dir = path.join(MEDIA_DIR, projectId, "assets");
-  let files: string[] = [];
-  try { files = readdirSync(dir); } catch { return []; }
-  return files
-    .filter((f) => /\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)$/i.test(f))
-    .map((f) => ({ name: f, kind: /\.(mp4|mov|webm|m4v)$/i.test(f) ? "video" : "image" }));
+  const read = (id: string) => {
+    const dir = path.join(MEDIA_DIR, id, "assets");
+    let files: string[] = [];
+    try { files = readdirSync(dir); } catch { return []; }
+    return files
+      .filter((f) => /\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)$/i.test(f))
+      .map((f) => ({ name: f, kind: /\.(mp4|mov|webm|m4v)$/i.test(f) ? "video" : "image" }));
+  };
+  return [...read(projectId), ...read("_global")];
 }
 
 // Never trust the LLM's stage name — map by what the instruction is ABOUT.
