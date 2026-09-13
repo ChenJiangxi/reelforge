@@ -24,6 +24,7 @@ export async function parseChat(
   project: { topic: string; title: string },
   awaiting?: { kind: string; label: string } | null,
   assets?: { name: string; kind: string }[],
+  stateCtx?: string,
 ): Promise<ParsedChat> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) {
@@ -64,6 +65,8 @@ review 操作优先于一切普通操作——她在审,不是在下新需求。
 - {"action":"assign_asset","clip":"c03","asset":"素材文件名"} 指定某拍用素材库里的录屏/图片
 - {"action":"redo_stage","kind":"阶段","note":"具体修改指示"} 重做整个阶段(阶段∈ topic|script|footage|voice|edit|subtitles|deliver;用于"封面换一版""配音慢点""文案重写"这类整阶段的活)
 - {"action":"reply","text":"回复"} 不需要改片子(闲聊/提问),直接回话
+
+【铁律】回答"右边这是什么/这拍用的什么"类问题,只能基于下面给的真实画面清单回答,清单没有的就直说不知道,绝不许编。
 ${awaitingBlock}
 规则:
 - 她说的"第N句"对应列表顺序(c01=第1句)。
@@ -76,6 +79,9 @@ ${awaitingBlock}
 当前分句:
 ${clipList}
 ${assetList}
+
+当前画面真实状态(回答以它为准):
+${stateCtx || "(还没有素材产物)"}
 
 她说:${userText}`,
         },

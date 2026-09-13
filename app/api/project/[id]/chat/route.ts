@@ -63,6 +63,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const awaiting = project.stages.find((s) => s.status === "awaiting_review") ?? null;
   const assets = projectAssets(id);
 
+  // 她问"右边这是什么"时,agent 必须答得出——把当前画面真实状态喂给它
+  const footageStage = project.stages.find((s) => s.kind === "footage");
+  const footageArt = footageStage?.artifacts ? JSON.parse(footageStage.artifacts) : {};
+  const cardsCtx = Array.isArray(footageArt.cards)
+    ? footageArt.cards.map((c: { name: string; text?: string; type?: string; theme?: string; asset?: string }, i: number) =>
+        `图${i + 1}(${c.name}):${c.asset ? `素材「${c.asset}」` : `${c.type ?? "?"}卡/${c.theme ?? "?"}底`} — 台词"${(c.text ?? "").slice(0, 24)}"`,
+      ).join("\n")
+    : "";
+
+  const stateCtx = [
+    awaiting ? `右边正在审:${stageLabel(awaiting.kind)}` : "右边没有待审的东西",
+    cardsCtx ? `素材阶段每拍实际用的画面:\n${cardsCtx}` : "",
+  ].filter(Boolean).join("\n");
+
   let parsed;
   try {
     parsed = await parseChat(
@@ -71,6 +85,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       project,
       awaiting ? { kind: awaiting.kind, label: stageLabel(awaiting.kind) } : null,
       assets,
+      stateCtx,
     );
   } catch (e) {
     const reply = `解析失败(${e instanceof Error ? e.message : "LLM 错误"}),你的消息我记下了,稍后再试。`;
