@@ -82,7 +82,7 @@ export function PreviewPane({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-muted/50 p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-muted/50 p-3">
         <StageArtifact stage={view} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} />
       </div>
 
@@ -114,13 +114,22 @@ function StageArtifact({
 }) {
   const a = stage.artifacts;
 
-  if (stage.status === "pending") {
+  if (stage.status === "pending" && !stage.artifacts.video && !stage.artifacts.images?.length && !stage.artifacts.script && !stage.artifacts.note) {
     return (
       <div className="flex h-full items-center justify-center py-16 text-center text-sm text-muted-foreground">
         这个阶段还没做。
         <br />
         上游通过后 agent 才动手。
       </div>
+    );
+  }
+  if (stage.status === "pending") {
+    // 重做排队中:旧产物继续可看(下面照常渲染),上面加一行说明
+    return (
+      <>
+        <p className="mx-auto mb-3 max-w-2xl text-center text-xs text-accent">重做排队中 —— 下面是上一版,新版出来自动替换</p>
+        <StageArtifact stage={{ ...stage, status: "approved" }} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} />
+      </>
     );
   }
   if (stage.status === "working") {
@@ -145,9 +154,11 @@ function StageArtifact({
   let body: React.ReactNode = null;
   if (stage.kind === "topic") {
     body = (
-      <pre className="mx-auto max-w-2xl whitespace-pre-wrap rounded-lg bg-card p-6 text-sm leading-[1.8] text-foreground/85">
-        {a.note}
-      </pre>
+      <div className="mx-auto flex h-full max-w-3xl flex-col">
+        <pre className="flex-1 whitespace-pre-wrap rounded-lg bg-card p-6 text-sm leading-[1.8] text-foreground/85">
+          {a.note}
+        </pre>
+      </div>
     );
   } else if (stage.kind === "script") {
     body = <ScriptEditor stage={stage} projectId={projectId} />;
@@ -177,14 +188,14 @@ function StageArtifact({
           key={a.video}
           controls
           autoPlay={stage.status === "awaiting_review"}
-          className={`rounded-md border border-border bg-black ${vertical ? "max-h-[58vh] w-auto" : "w-full max-w-3xl"}`}
+          className={`rounded-md border border-border bg-black ${vertical ? "max-h-full w-auto" : "w-full max-w-3xl"}`}
           src={a.video}
         />
       </div>
     );
   } else if (stage.kind === "deliver") {
     body = (
-      <div className="mx-auto flex max-w-2xl flex-wrap items-start justify-center gap-4">
+      <div className="mx-auto flex max-w-3xl flex-wrap items-start justify-center gap-4">
         {a.cover && (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={a.cover} alt="封面" className="w-44 rounded-md border border-border" />
@@ -200,7 +211,7 @@ function StageArtifact({
     );
   } else if (a.note) {
     body = (
-      <p className={`mx-auto max-w-2xl whitespace-pre-wrap text-sm ${a.note.startsWith("FAILED:") ? "text-destructive" : "text-muted-foreground"}`}>
+      <p className={`mx-auto max-w-3xl whitespace-pre-wrap text-sm ${a.note.startsWith("FAILED:") ? "text-destructive" : "text-muted-foreground"}`}>
         {a.note}
       </p>
     );
@@ -243,8 +254,8 @@ function ScriptEditor({ stage, projectId }: { stage: StageView; projectId: strin
 
   if (!editing) {
     return (
-      <div className="group relative mx-auto max-w-2xl">
-        <pre className="whitespace-pre-wrap rounded-lg bg-card p-6 text-sm leading-[1.8] text-foreground/85">
+      <div className="group relative mx-auto flex h-full max-w-3xl flex-col">
+        <pre className="flex-1 whitespace-pre-wrap rounded-lg bg-card p-6 text-sm leading-[1.8] text-foreground/85">
           {text}
         </pre>
         <button

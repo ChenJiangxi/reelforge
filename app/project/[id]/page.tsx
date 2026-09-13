@@ -67,7 +67,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     }));
 
   return (
-    <div className="project-shell max-w-6xl">
+    <div className="project-shell max-w-[1600px]">
       <a href="/" className="text-sm text-muted-foreground hover:text-foreground">
         ← 全部项目
       </a>

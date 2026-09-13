@@ -40,7 +40,7 @@ body {
 }
 @media (min-width: 1024px) {
   .editor-grid {
-    grid-template-columns: 380px 1fr;
+    grid-template-columns: 360px 1fr;
   }
   /* 桌面端项目页 = 固定高度的 app shell:页面不滚,只有聊天消息区和预览内容区自己滚;
      输入框/进度条/审核栏钉在原地 */
