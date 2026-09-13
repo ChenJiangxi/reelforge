@@ -70,7 +70,11 @@ export async function upload(projectId, absPath, name, attempt = 1) {
         res.on("data", (d) => (body += d));
         res.on("end", () => {
           if (res.statusCode !== 200) return reject(new Error(`upload -> ${res.statusCode}: ${body.slice(0, 200)}`));
-          try { resolve(JSON.parse(body)); } catch { reject(new Error("upload: bad json")); }
+          try {
+            const j = JSON.parse(body);
+            if (j.url) j.url += `?v=${Date.now()}`; // 同名覆盖后,URL 必须变,浏览器才不会拿旧缓存
+            resolve(j);
+          } catch { reject(new Error("upload: bad json")); }
         });
       },
     );

@@ -47,7 +47,9 @@ export async function GET(
       "Content-Length": String(stat.size),
       "Content-Type": type,
       "Accept-Ranges": "bytes",
-      "Cache-Control": "public, max-age=31536000, immutable",
+      // 媒体原地覆盖(card-c01.png 换了内容不换名):必须每次向服务器再校验,304 走缓存
+      "Cache-Control": "no-cache",
+      "Last-Modified": stat.mtime.toUTCString(),
     },
   });
 }
