@@ -28,7 +28,34 @@ export function AssetBar({ projectId, assets, compact = false }: { projectId: st
   if (compact) {
     return (
       <span className="flex shrink-0 items-center gap-2">
-        <span className="text-xs text-muted-foreground">素材库 {assets.length > 0 ? `(${assets.length})` : ""}</span>
+        <span className="flex items-center gap-1">
+          {assets.slice(0, 4).map((a) =>
+            a.kind === "video" ? (
+              <span
+                key={a.name}
+                draggable
+                onDragStart={(e) => e.dataTransfer.setData("application/x-rf-asset", a.name)}
+                title={`拖到某拍上:${a.name}`}
+                className="flex h-6 cursor-grab items-center rounded bg-muted px-1.5 text-[10px] text-foreground/80 hover:ring-1 hover:ring-accent/50"
+              >
+                🎬
+              </span>
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={a.name}
+                src={a.url}
+                alt={a.name}
+                title={`拖到某拍上:${a.name}`}
+                draggable
+                onDragStart={(e) => e.dataTransfer.setData("application/x-rf-asset", a.name)}
+                className="h-6 w-auto cursor-grab rounded border border-border hover:ring-1 hover:ring-accent/50"
+              />
+            ),
+          )}
+          {assets.length > 4 && <span className="text-[10px] text-muted-foreground">+{assets.length - 4}</span>}
+        </span>
+        <span className="text-xs text-muted-foreground">素材库{assets.length > 4 ? `(${assets.length})` : ""}</span>
         <input ref={inputRef} type="file" accept="video/*,image/*" multiple className="hidden" onChange={(e) => upload(e.target.files)} />
         <button
           onClick={() => inputRef.current?.click()}

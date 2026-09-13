@@ -16,6 +16,35 @@ export type StageView = {
 
 // 预览区 = 阶段查看器:进度条点哪段,这里就看哪段。
 // 默认视图:待审 > 最新成片 > 制作中占位。审核门只在待审阶段出现。
+function useAssign(projectId: string) {
+  const router = useRouter();
+  const [over, setOver] = useState<string | null>(null);
+  const assign = async (clip: string, asset: string) => {
+    await fetch(`/api/project/${projectId}/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clip, asset }),
+    });
+    router.refresh();
+  };
+  const dropProps = (clip: string) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (e.dataTransfer.types.includes("application/x-rf-asset")) {
+        e.preventDefault();
+        setOver(clip);
+      }
+    },
+    onDragLeave: () => setOver((o) => (o === clip ? null : o)),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      const asset = e.dataTransfer.getData("application/x-rf-asset");
+      setOver(null);
+      if (asset) assign(clip, asset);
+    },
+  });
+  return { over, dropProps };
+}
+
 export function PreviewPane({
   stages,
   clips,
@@ -38,6 +67,7 @@ export function PreviewPane({
   projectId: string;
 }) {
   const vertical = aspect !== "16:9";
+  const { over, dropProps } = useAssign(projectId);
   const awaiting = stages.find((s) => s.status === "awaiting_review");
   const withVideo = [...stages].reverse().find((s) => s.artifacts.video);
   const working = stages.find((s) => s.status === "working");
@@ -85,11 +115,11 @@ export function PreviewPane({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-muted/50 p-3">
-        <StageArtifact stage={view} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} />
+        <StageArtifact stage={view} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} dropProps={dropProps} over={over} />
       </div>
 
       {showTracks && (
-        <Tracks clips={clips} wave={wave} audio={audio} subs={subs} vertical={vertical} />
+        <Tracks clips={clips} wave={wave} audio={audio} subs={subs} vertical={vertical} dropProps={dropProps} over={over} />
       )}
 
       {isAwaiting && <GateBar stageId={view.id} onDone={() => onSelect(null)} />}
@@ -106,6 +136,8 @@ function StageArtifact({
   audio,
   wave,
   projectId,
+  dropProps,
+  over,
 }: {
   stage: StageView;
   vertical: boolean;
@@ -113,6 +145,8 @@ function StageArtifact({
   audio?: string;
   wave?: string;
   projectId: string;
+  dropProps?: (clip: string) => Record<string, unknown>;
+  over?: string | null;
 }) {
   const a = stage.artifacts;
 
@@ -130,7 +164,7 @@ function StageArtifact({
     return (
       <>
         <p className="mx-auto mb-3 max-w-2xl text-center text-xs text-accent">重做排队中 —— 下面是上一版,新版出来自动替换</p>
-        <StageArtifact stage={{ ...stage, status: "approved" }} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} />
+        <StageArtifact stage={{ ...stage, status: "approved" }} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} dropProps={dropProps} over={over} />
       </>
     );
   }
@@ -177,7 +211,7 @@ function StageArtifact({
       </div>
     );
   } else if (a.video) {
-    body = <VideoWithBeatRail stage={stage} vertical={vertical} clips={clips} />;
+    body = <VideoWithBeatRail stage={stage} vertical={vertical} clips={clips} dropProps={dropProps} over={over} />;
   } else if (stage.kind === "deliver") {
     body = (
       <div className="mx-auto flex max-w-3xl flex-wrap items-start justify-center gap-4">
@@ -340,10 +374,14 @@ function VideoWithBeatRail({
   stage,
   vertical,
   clips,
+  dropProps,
+  over,
 }: {
   stage: StageView;
   vertical: boolean;
   clips: ClipThumb[];
+  dropProps?: (clip: string) => Record<string, unknown>;
+  over?: string | null;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const GAP = 0.25;
@@ -383,7 +421,8 @@ function VideoWithBeatRail({
               <button
                 key={c.name}
                 onClick={() => seek(i)}
-                className="block w-full px-3 py-2 text-left hover:bg-muted/70"
+                {...(dropProps ? dropProps(c.name) : {})}
+                className={`block w-full px-3 py-2 text-left hover:bg-muted/70 ${over === c.name ? "bg-accent-soft ring-1 ring-inset ring-accent" : ""}`}
                 title={c.text}
               >
                 <span className="font-mono text-[10px] text-accent">
@@ -407,12 +446,16 @@ function Tracks({
   audio,
   subs = [],
   vertical,
+  dropProps,
+  over,
 }: {
   clips: ClipThumb[];
   wave?: string;
   audio?: string;
   subs?: { text: string; start: number; end: number }[];
   vertical: boolean;
+  dropProps?: (clip: string) => Record<string, unknown>;
+  over?: string | null;
 }) {
   const total = subs.length ? Math.max(...subs.map((s) => s.end)) : 0;
   return (
@@ -426,7 +469,8 @@ function Tracks({
             {clips.map((c, i) => (
               <div
                 key={c.name}
-                className="relative shrink-0 overflow-hidden rounded-md border border-border"
+                {...(dropProps ? dropProps(c.name) : {})}
+                className={`relative shrink-0 overflow-hidden rounded-md border ${over === c.name ? "border-accent ring-2 ring-accent/40" : "border-border"}`}
                 title={c.text}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
