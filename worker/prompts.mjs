@@ -4,16 +4,41 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// 视觉教案(画面生成的"skill")——可独立编辑,worker 启动时读入。
-const VISUAL_TASTE = (() => {
+// 教案在线化:worker 从服务器拉取(/playbooks 页可在线编辑),本地文件兜底。
+// 教案改了,下一条片就按新的来——这就是"每步都有优化空间"的实体。
+const PLAYBOOK_NAMES = ["topic", "script", "critique", "visual"];
+const playbooks = {};
+
+function localRead(name) {
   try {
-    return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "playbooks", "visual.md"), "utf8").trim();
+    return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "playbooks", `${name}.md`), "utf8").trim();
   } catch {
     return "";
   }
-})();
+}
 
-export { VISUAL_TASTE };
+export async function loadPlaybooks() {
+  const base = (process.env.BOARD_URL || "").replace(/\/$/, "");
+  const token = process.env.WORKER_TOKEN || "";
+  for (const name of PLAYBOOK_NAMES) {
+    try {
+      const r = await fetch(`${base}/api/playbooks/${name}`, { headers: { authorization: `Bearer ${token}` } });
+      if (r.ok) {
+        const j = await r.json();
+        if (j.text) { playbooks[name] = j.text; continue; }
+      }
+      throw new Error(String(r.status));
+    } catch {
+      playbooks[name] = localRead(name);
+    }
+  }
+}
+
+export function playbook(name) {
+  return playbooks[name] ?? localRead(name);
+}
+
+// Back-compat helper (card/cover prompts use it inline)
 export const TASTE = `
 审美硬标准(必须遵守):
 - 真素材不吹:数字只用真实值,绝不编热搜、假统计、假案例。没有真数字就不谈数字。
@@ -32,11 +57,13 @@ export const PROMPTS = {
     },
     {
       role: "user",
-      content: `原始想法:${item.topic}
+      content: `${playbook("topic")}
+
+原始想法:${item.topic}
 平台:${item.platform === "bilibili" ? "B站横版" : "抖音竖版"},目标时长 ~${item.duration} 秒。
 ${item.artifacts?.material ? `\n参考材料(真实资料,内容优先从这里出,别自己编):\n${item.artifacts.material}\n` : ""}
 
-把这个想法收束成一个能拍的选题。返回 JSON(不要多余文字):
+返回 JSON(不要多余文字):
 {
   "angle": "切入角度,一句话说清这条片子讲什么、跟别人讲法差在哪",
   "hook": "开场钩子——视频第一句话,要炸、要让人停下滑动的手指",
@@ -53,20 +80,7 @@ ${item.artifacts?.material ? `\n参考材料(真实资料,内容优先从这里�
       content: `你是短视频口播编剧。写的是一篇"能一口气念下来"的稿子,不是金句清单。
 ${TASTE}
 
-叙事结构(60-90秒口播的标准弧线,按此推进):
-1. hook 钩子:第一句制造矛盾/反问/反差(三种轮换着用,别只会甩数字)。3秒内让人停下来。
-2. context 展开:钩子之后给必要的背景——为什么会这样?一两句就够,别铺垫。
-3. evidence 证据:具体的人、事、数字(只用真实值)。这是肉。
-4. turn 转折:"但真正的重点是……"——把前面说的重新定义一次。全片最需要判断力的地方。
-5. landing 落点:所以对观众意味着什么?一句有立场的结论,不是空洞升华。
-
-句间连贯(这次的重点,必须做到):
-- 每句话必须承接上一句:用"但/所以/结果呢/换句话说/你可能会想/这意味着/更关键的是"这类承接,或者明确的指代("这套逻辑""它们""这事儿")。
-- 禁止清单体:不许每句一个独立观点、句与句之间可以任意调换顺序。稿子的句子是有先后的,挪了就讲不通,这才叫有逻辑。
-- 长短句混排:两三句短的砸一个节奏点,跟一句长的把逻辑说透。不许每句一样长。
-- 连接词别每句都用同一个;"首先/其次/最后"禁用。
-
-画面按节拍走:一个节拍(beat)= 一个完整意思,1-3 句话,8-15 秒。不是一句话一个画面。`,
+${playbook("script")}`,
     },
     {
       role: "user",
@@ -125,7 +139,7 @@ ${JSON.stringify(draft, null, 1)}
     return [
       {
         role: "system",
-        content: `你是短视频画面设计,把一节口播设计成一张卡的内容。\n${TASTE}\n\n${VISUAL_TASTE}\n\n卡片语言:${item.voice === "minimax-en" ? "英文" : "中文"}。`,
+        content: `你是短视频画面设计,把一节口播设计成一张卡的内容。\n${TASTE}\n\n${playbook("visual")}\n\n卡片语言:${item.voice === "minimax-en" ? "英文" : "中文"}。`,
       },
       {
         role: "user",
@@ -165,7 +179,7 @@ nodes/cols/rows/steps 只填当前 type 需要的,其它省略。`,
   cover: (item, topic, script) => [
     {
       role: "system",
-      content: `你是抖音封面设计。封面风格:巨字+戏剧化,爆款风,但不能 tacky(不用感叹号轰炸、不低俗)。${TASTE}\n\n${VISUAL_TASTE}`,
+      content: `你是抖音封面设计。封面风格:巨字+戏剧化,爆款风,但不能 tacky(不用感叹号轰炸、不低俗)。${TASTE}\n\n${playbook("visual")}`,
     },
     {
       role: "user",

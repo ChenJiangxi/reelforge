@@ -9,10 +9,12 @@
 //   env OPENROUTER_API_KEY=$OPENROUTER_API_KEY_REELFORGE node worker/index.mjs
 import { poll, claim, submit, resetWorking } from "./board.mjs";
 import { STAGES } from "./stages.mjs";
+import { loadPlaybooks } from "./prompts.mjs";
 
 const POLL_MS = Number(process.env.POLL_MS || 15000);
 const MAX_CONC = Number(process.env.MAX_CONC || 1);
 const STAGE_TIMEOUT_MS = Number(process.env.STAGE_TIMEOUT_MS || 45 * 60 * 1000);
+const PLAYBOOK_REFRESH_MS = 60000;
 
 const inflight = new Map(); // stageId -> startedAt
 
@@ -81,6 +83,8 @@ async function tick() {
 
 async function main() {
   log(`reelforge worker starting (board=${process.env.BOARD_URL || "http://localhost:3000"}, poll=${POLL_MS}ms, conc=${MAX_CONC})`);
+  await loadPlaybooks().catch((e) => log(`playbooks load failed (local fallback): ${e.message}`));
+  setInterval(() => loadPlaybooks().catch(() => {}), PLAYBOOK_REFRESH_MS);
   try {
     const r = await resetWorking();
     if (r.reset) log(`startup: reset ${r.reset} orphaned working stage(s)`);

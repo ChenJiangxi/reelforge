@@ -56,6 +56,7 @@ export function AppShell({
           <nav className="mt-8 flex flex-col items-center gap-3 text-sm">
             <Link href="/" title="全部项目" className="rounded-md p-2 hover:bg-muted">📋</Link>
             <Link href="/assets" title="素材库" className="rounded-md p-2 hover:bg-muted">🖼</Link>
+            <Link href="/playbooks" title="教案" className="rounded-md p-2 hover:bg-muted">📖</Link>
           </nav>
         ) : (
           <>
@@ -66,6 +67,9 @@ export function AppShell({
               </Link>
               <Link href="/assets" className="block rounded-md px-3 py-2.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground">
                 素材库
+              </Link>
+              <Link href="/playbooks" className="block rounded-md px-3 py-2.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground">
+                教案
               </Link>
               <div className="block cursor-default rounded-md px-3 py-2.5 text-muted-foreground/60">
                 数据反馈<span className="ml-1.5 text-[10px]">soon</span>

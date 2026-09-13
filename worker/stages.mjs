@@ -87,7 +87,12 @@ async function topic(item) {
     "不吹:",
     ...(out.avoid || []).map((c) => `· ${c}`),
   ].join("\n");
-  return { note, topic: out };
+  const warn = [];
+  if (!out.hook || out.hook.length < 6) warn.push("钩子太短或缺失");
+  const banned = /最|彻底|史上|百分百|绝对/.test(`${out.hook} ${(out.claims||[]).join(" ")}`) ;
+  if (banned) warn.push("出现了绝对化用词(最/彻底/史上…),她审的时候重点看");
+  const warnLine = warn.length ? `\n⚠ 选题自检:${warn.join(";")}` : "";
+  return { note: note + warnLine, topic: out };
 }
 
 async function script(item) {
@@ -234,11 +239,17 @@ async function voice(item) {
   await ffmpeg(["-i", preview, "-filter_complex", "showwavespic=s=1800x140:colors=#e8622c", "-frames:v", "1", wave]);
   const { url: waveUrl } = await upload(item.projectId, wave, "voice-wave.png");
   const total = meta.reduce((n, m) => n + m.dur, 0);
+  const dev = Math.abs(total - item.duration) / item.duration;
+  const warn = [];
+  if (dev > 0.3) warn.push(`配音总长偏离目标 ${Math.round(dev * 100)}%(目标 ~${item.duration}s)`);
+  const longClip = meta.find((m) => m.dur > 20);
+  if (longClip) warn.push(`${longClip.name} 太长(${longClip.dur.toFixed(1)}s),可能念不过来`);
+  const warnLine = warn.length ? `\n⚠ 配音自检:${warn.join(";")}` : "";
   return {
     audio: url,
     wave: waveUrl,
     voiceMeta: { clips: meta.map(({ name, text, dur }) => ({ name, text, dur })), gap: GAP },
-    note: `音色 ${profile.voice_id} @${profile.speed}x,共 ${total.toFixed(1)}s(${meta.length} 句)。配音够不够激情、地不地道,请审听。`,
+    note: `音色 ${profile.voice_id} @${profile.speed}x,共 ${total.toFixed(1)}s(${meta.length} 句)。配音够不够激情、地不地道,请审听。${warnLine}`,
   };
 }
 
@@ -331,9 +342,16 @@ async function edit(item) {
   console.log("  [edit] uploading edit.mp4…");
   const { url } = await upload(item.projectId, out, "edit.mp4");
   const total = await ffprobeDur(out);
+  const expected = meta.reduce((n, m) => n + m.dur + GAP, 0);
+  const info = await ffprobeInfo(out);
+  const vs = (info.streams || []).find((x) => x.codec_type === "video") || {};
+  const warn = [];
+  if (Math.abs(total - expected) > 1.5) warn.push(`成片 ${total.toFixed(1)}s 与音轨预期 ${expected.toFixed(1)}s 对不上`);
+  if (Number(vs.width) !== W || Number(vs.height) !== H) warn.push(`分辨率 ${vs.width}x${vs.height} ≠ ${W}x${H}`);
+  const warnLine = warn.length ? `\n⚠ 剪辑自检:${warn.join(";")}` : "";
   return {
     video: url,
-    note: `粗剪 ${total.toFixed(1)}s,${visuals.length} 拍${bgmFile ? "(带 BGM 垫底)" : "(无 BGM)"}。节奏/画面对位请审。`,
+    note: `粗剪 ${total.toFixed(1)}s,${visuals.length} 拍${bgmFile ? "(带 BGM 垫底)" : "(无 BGM)"}。节奏/画面对位请审。${warnLine}`,
   };
 }
 
@@ -398,10 +416,16 @@ async function subtitles(item) {
   await ffmpeg(["-i", local, ...inputs, "-filter_complex", chain, "-map", "[vout]", "-map", "0:a", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "copy", out]);
   console.log("  [subtitles] uploading subs.mp4…");
   const { url } = await upload(item.projectId, out, "subs.mp4");
+  const warn = [];
+  if (!overlays.length) warn.push("一行字幕都没有");
+  const lastEnd = overlays.length ? overlays.at(-1).end : 0;
+  const vidDur = await ffprobeDur(out);
+  if (overlays.length && vidDur - lastEnd > 3) warn.push(`结尾 ${(vidDur - lastEnd).toFixed(1)}s 没有字幕`);
+  const warnLine = warn.length ? `\n⚠ 字幕自检:${warn.join(";")}` : "";
   return {
     video: url,
     subs: overlays.map((o) => ({ text: o.text, start: o.start, end: o.end })),
-    note: `字幕已烧录(${overlays.length} 行)。错字/断句/位置请审。`,
+    note: `字幕已烧录(${overlays.length} 行)。错字/断句/位置请审。${warnLine}`,
   };
 }
 
@@ -477,10 +501,12 @@ async function deliver(item) {
   const { url: coverUrl } = await upload(item.projectId, png, "cover.png");
 
   const caption = await chatJSON(guided(item, PROMPTS.caption(item, t, scriptText)), { temperature: 0.7 });
+  const coverQa = await reviewImage(png, "审这张短视频封面:1)主标题 0.5 秒内能不能读清 2)文字有没有被裁/溢出 3)有没有低俗震惊体感");
+  const warnLine = coverQa.ok ? "" : `\n⚠ 封面自检:${(coverQa.issues || []).join(";")}`;
   return {
     cover: coverUrl,
     caption,
-    note: "封面 + 抖音文案。通过后自动打包(视频+封面+文案 zip)可下载。",
+    note: `封面 + 抖音文案。通过后自动打包(视频+封面+文案 zip)可下载。${warnLine}`,
   };
 }
 
