@@ -165,14 +165,7 @@ function StageArtifact({
   } else if (stage.kind === "script") {
     body = <ScriptEditor stage={stage} projectId={projectId} />;
   } else if (stage.kind === "footage" && a.images?.length) {
-    body = (
-      <div className="mx-auto grid max-w-3xl grid-cols-2 gap-2 sm:grid-cols-3">
-        {a.images.map((src, i) => (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img key={i} alt={`卡 ${i + 1}`} src={src} className="w-full rounded-md border border-border" />
-        ))}
-      </div>
-    );
+    body = <CardStrip images={a.images} cards={a.cards ?? []} />;
   } else if (stage.kind === "voice") {
     body = (
       <div className="mx-auto flex max-w-2xl flex-col items-center gap-4 rounded-lg bg-card p-5">
@@ -287,6 +280,55 @@ function ScriptEditor({ stage, projectId }: { stage: StageView; projectId: strin
           取消
         </button>
         <span className="ml-auto text-xs text-muted-foreground">你的版本就是定稿,配音/画面/剪辑自动跟着重出</span>
+      </div>
+    </div>
+  );
+}
+
+// ── 素材审阅:横向滑动,一张一张过(像刷抖音),带吸附/计数/箭头 ──
+
+function CardStrip({ images, cards }: { images: string[]; cards: { text?: string; asset?: string }[] }) {
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [idx, setIdx] = useState(0);
+
+  const cardW = () => stripRef.current?.querySelector("figure")?.clientWidth ?? 300;
+
+  const go = (dir: 1 | -1) => {
+    const el = stripRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * (cardW() + 12), behavior: "smooth" });
+  };
+  const onScroll = () => {
+    const el = stripRef.current;
+    if (!el) return;
+    setIdx(Math.round(el.scrollLeft / (cardW() + 12)));
+  };
+
+  return (
+    <div className="relative flex h-full flex-col">
+      <div className="mb-2 flex shrink-0 items-center justify-between">
+        <span className="font-mono text-xs text-muted-foreground">
+          {Math.min(idx + 1, images.length)} / {images.length}
+        </span>
+        <div className="flex gap-1.5">
+          <button onClick={() => go(-1)} className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:border-foreground/30">←</button>
+          <button onClick={() => go(1)} className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:border-foreground/30">→</button>
+        </div>
+      </div>
+      <div
+        ref={stripRef}
+        onScroll={onScroll}
+        className="flex min-h-0 flex-1 snap-x snap-mandatory items-center gap-3 overflow-x-auto pb-2"
+      >
+        {images.map((src, i) => (
+          <figure key={i} className="flex h-full shrink-0 snap-center flex-col items-center justify-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt={`卡 ${i + 1}`} className="max-h-full w-auto rounded-md border border-border" />
+            <figcaption className="mt-1.5 max-w-52 truncate text-center text-[11px] text-muted-foreground">
+              {cards[i]?.asset ? `🎬 ${cards[i].asset}` : (cards[i]?.text ?? "")}
+            </figcaption>
+          </figure>
+        ))}
       </div>
     </div>
   );
