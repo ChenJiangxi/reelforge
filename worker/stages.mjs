@@ -4,7 +4,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from 
 import { join } from "node:path";
 import { chatJSON, reviewImage, reviewFrames } from "./llm.mjs";
 import { PROMPTS } from "./prompts.mjs";
-import { renderCard, renderSubLine, sizeFor, closeBrowser } from "./cards.mjs";
+import { renderCard, renderCardVideo, renderSubLine, sizeFor, closeBrowser } from "./cards.mjs";
 import { ffmpeg, ffprobeDur, ffprobeInfo, ffmpegOut } from "./ffmpeg.mjs";
 import { upload, download } from "./board.mjs";
 
@@ -202,10 +202,14 @@ async function footage(item) {
       if (content.type === "text") content.type = "diagram";
       await renderCard(content, size, png);
     }
-    console.log(`  [footage] ${clip.name} rendered, uploading`);
+    console.log(`  [footage] ${clip.name} rendered, animating…`);
+    const webm = join(dir, `${clip.name}.webm`);
+    await renderCardVideo(content, size, 12, webm);
     const { url } = await upload(item.projectId, png, `card-${clip.name}.png`);
+    const { url: animUrl } = await upload(item.projectId, webm, `card-${clip.name}.webm`);
+    console.log(`  [footage] ${clip.name} rendered+animated, uploaded`);
     images.push(url);
-    cards.push({ name: clip.name, text: clip.text, ...content });
+    cards.push({ name: clip.name, text: clip.text, anim: animUrl, ...content });
   }
   await closeBrowser();
   const assetCount = cards.filter((c) => c.asset).length;
@@ -268,7 +272,11 @@ async function ensureInputs(item) {
   const visuals = [];
   for (let i = 0; i < cardsMeta.length; i++) {
     const cm = cardsMeta[i];
-    if (cm.asset) {
+    if (cm.anim) {
+      const p = join(cardsDir, `${cm.name}.webm`);
+      if (!existsSync(p)) await download(cm.anim, p);
+      visuals.push({ kind: "anim", path: p });
+    } else if (cm.asset) {
       const asset = assets.find((a) => a.name === cm.asset);
       if (!asset) throw new Error(`素材 ${cm.asset} 不在项目素材库`);
       const p = join(assetsDir, cm.asset);
@@ -302,7 +310,7 @@ async function edit(item) {
     const segDur = meta[i].dur + GAP;
     const frames = Math.ceil(segDur * fps);
     const seg = join(dir, `seg-${meta[i].name}.mp4`);
-    if (visuals[i].kind === "video") {
+    if (visuals[i].kind === "video" || visuals[i].kind === "anim") {
       await ffmpeg(["-stream_loop", "-1", "-i", visuals[i].path, "-t", segDur.toFixed(3), "-vf", `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${fps},format=yuv420p`, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
     } else {
       const zoom = `scale=${W * 2}:${H * 2}:flags=lanczos,zoompan=z='1+0.10*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${fps},format=yuv420p`;

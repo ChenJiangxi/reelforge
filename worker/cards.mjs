@@ -71,6 +71,7 @@ const THEMES = {
 export function cardHTML(
   { kicker = "", big = "", sub = "", foot = "", type = "text", big2 = "", step_no = "", nodes = [], cols = [], rows = [], steps = [], theme = "dark" },
   { width, height },
+  { animate = false } = {},
 ) {
   const T = THEMES[theme] || THEMES.dark;
   const vertical = height > width;
@@ -84,14 +85,14 @@ export function cardHTML(
     center = `
       <div class="diagram">
         ${nodes.map((n, i) => `
-          <div class="node ${n.tone === "accent" ? "node-accent" : ""}">
+          <div class="node a-node ${n.tone === "accent" ? "node-accent" : ""}" style="animation-delay:${0.15 + i * 0.28}s">
             <div class="node-label">${esc(n.label)}</div>
             ${n.sub ? `<div class="node-sub">${esc(n.sub)}</div>` : ""}
           </div>
-          ${i < nodes.length - 1 ? `<div class="edge"><div class="edge-arrow">→</div>${n.nextLabel ? `<div class="edge-label">${esc(n.nextLabel)}</div>` : ""}</div>` : ""}
+          ${i < nodes.length - 1 ? `<div class="edge a-edge" style="animation-delay:${0.35 + i * 0.28}s"><div class="edge-arrow">→</div>${n.nextLabel ? `<div class="edge-label">${esc(n.nextLabel)}</div>` : ""}</div>` : ""}
         `).join("")}
       </div>
-      ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
+      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
   } else if (type === "table") {
     center = `
       ${big ? `<div class="big" style="font-size:${Math.round(bigSize * 0.6)}px;margin-bottom:${vertical ? 44 : 32}px">${esc(big)}</div>` : ""}
@@ -105,15 +106,15 @@ export function cardHTML(
       ${big ? `<div class="big" style="font-size:${Math.round(bigSize * 0.6)}px;margin-bottom:${vertical ? 48 : 36}px">${esc(big)}</div>` : ""}
       <div class="flow">
         ${steps.map((st, i) => `
-          <div class="fstep">
+          <div class="fstep a-step" style="animation-delay:${0.15 + i * 0.25}s">
             <div class="fstep-no">${i + 1}</div>
             <div class="fstep-label">${esc(st.label)}</div>
             ${st.sub ? `<div class="fstep-sub">${esc(st.sub)}</div>` : ""}
           </div>
-          ${i < steps.length - 1 ? `<div class="farrow">→</div>` : ""}
+          ${i < steps.length - 1 ? `<div class="farrow a-edge" style="animation-delay:${0.3 + i * 0.25}s">→</div>` : ""}
         `).join("")}
       </div>
-      ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
+      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
   } else if (type === "contrast") {
     const sideFont = (t) => {
       const len = Math.max(1, String(t).length);
@@ -121,26 +122,26 @@ export function cardHTML(
     };
     center = `
       <div class="versus">
-        <div class="side"><div class="side-big" style="font-size:${sideFont(big)}px">${esc(big)}</div></div>
-        <div class="vs">VS</div>
-        <div class="side alt"><div class="side-big" style="font-size:${sideFont(big2)}px">${esc(big2)}</div></div>
+        <div class="side a-side-l"><div class="side-big" style="font-size:${sideFont(big)}px">${esc(big)}</div></div>
+        <div class="vs a-vs">VS</div>
+        <div class="side alt a-side-r"><div class="side-big" style="font-size:${sideFont(big2)}px">${esc(big2)}</div></div>
       </div>
-      ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
+      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
   } else if (type === "step") {
     center = `
-      ${step_no ? `<div class="stepno">${esc(step_no)}</div>` : ""}
+      ${step_no ? `<div class="stepno a-big">${esc(step_no)}</div>` : ""}
       <div class="big">${esc(big)}</div>
-      ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
+      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
   } else if (type === "quote") {
     center = `
-      <div class="qmark">"</div>
-      <div class="big quote">${esc(big)}</div>
-      ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
+      <div class="qmark a-q">"</div>
+      <div class="big quote a-big" data-big>${esc(big)}</div>
+      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
   } else {
     center = `
-      <div class="big ${type === "data" ? "data" : ""}">${esc(big)}</div>
-      ${type === "data" ? `<div class="bar"></div>` : ""}
-      ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
+      <div class="big a-big ${type === "data" ? "data" : ""}" data-big>${esc(big)}</div>
+      ${type === "data" ? `<div class="bar a-bar"></div>` : ""}
+      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
   }
 
   return `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -222,9 +223,51 @@ body::before {
 .fstep-label { font-size: ${vertical ? 38 : 32}px; font-weight: 700; color: ${T.text}; line-height: 1.3; }
 .fstep-sub { margin-top: 8px; font-size: ${vertical ? 27 : 24}px; color: ${T.footText}; line-height: 1.4; }
 .farrow { align-self: center; font-size: ${vertical ? 44 : 40}px; color: ${T.accent}; font-weight: 700; }
-</style></head><body>
+${animate ? `
+/* ── 入场动画(hyperframes 式:布局先行,动画只负责"怎么进来";入场完静止) ── */
+@keyframes rf-fade-down { from { opacity:0; transform:translateY(-24px);} to {opacity:1; transform:none;} }
+@keyframes rf-pop { 0% {opacity:0; transform:scale(.86);} 55% {opacity:1; transform:scale(1.05);} 100% {opacity:1; transform:scale(1);} }
+@keyframes rf-rise { from {opacity:0; transform:translateY(30px);} to {opacity:1; transform:none;} }
+@keyframes rf-draw { from {opacity:0; transform:scaleX(0);} to {opacity:1; transform:scaleX(1);} }
+@keyframes rf-slide-l { from {opacity:0; transform:translateX(-64px);} to {opacity:1; transform:none;} }
+@keyframes rf-slide-r { from {opacity:0; transform:translateX(64px);} to {opacity:1; transform:none;} }
+.a-kicker { animation: rf-fade-down .5s .1s both; }
+.a-big { animation: rf-pop .65s .35s both; }
+.a-q { animation: rf-pop .5s .15s both; }
+.a-bar { animation: rf-draw .5s .95s both; transform-origin:center; }
+.a-sub { animation: rf-rise .5s 1.05s both; }
+.a-side-l { animation: rf-slide-l .55s .25s both; }
+.a-side-r { animation: rf-slide-r .55s .55s both; }
+.a-vs { animation: rf-pop .4s .95s both; }
+.a-node { animation: rf-pop .5s both; }
+.a-step { animation: rf-rise .45s both; }
+.a-edge { animation: rf-draw .4s both; transform-origin:center; }
+.ktable tbody tr { animation: rf-rise .4s both; }
+.ktable tbody tr:nth-child(1) { animation-delay:.55s } .ktable tbody tr:nth-child(2) { animation-delay:.75s }
+.ktable tbody tr:nth-child(3) { animation-delay:.95s } .ktable tbody tr:nth-child(4) { animation-delay:1.15s }
+.ktable thead tr { animation: rf-fade-down .4s .3s both; }
+` : ""}
+</style>
+${animate && type === "data" ? `<script>
+addEventListener('load', () => {
+  const el = document.querySelector('[data-big]');
+  if (!el) return;
+  const orig = el.textContent;
+  const m = orig.match(/^([^\d]*)([\d.]+)([\s\S]*)$/);
+  if (!m) return;
+  const target = parseFloat(m[2]); const dec = (m[2].split('.')[1] || '').length;
+  const t0 = performance.now() + 400;
+  (function tick() {
+    const p = Math.min(1, Math.max(0, (performance.now() - t0) / 900));
+    const v = target * (1 - Math.pow(1 - p, 3));
+    el.textContent = m[1] + v.toFixed(dec) + m[3];
+    if (p < 1) requestAnimationFrame(tick);
+  })();
+});
+</script>` : ""}
+</head><body>
 <div class="wrap">
-  ${kicker ? `<div class="kicker">${esc(kicker)}</div>` : ""}
+  ${kicker ? `<div class="kicker a-kicker">${esc(kicker)}</div>` : ""}
   ${center}
 </div>
 ${foot ? `<div class="foot">${esc(foot)}</div>` : ""}
@@ -246,6 +289,31 @@ export async function renderCard(content, size, outPath) {
   await page.setContent(cardHTML(content, size), { waitUntil: "load" });
   await page.screenshot({ path: outPath });
   await ctx.close();
+  return outPath;
+}
+
+// 动画卡:Playwright recordVideo 实时录 webm(入场动画在头 ~1.5s,之后静止,
+// 剪辑时按拍长裁剪/循环尾巴即可)。durSec 建议 10-12s。
+export async function renderCardVideo(content, size, durSec, outPath) {
+  mkdirSync(join(outPath, ".."), { recursive: true });
+  const b = await browser();
+  const tmp = join(outPath, "..", `rec-${Date.now()}`);
+  mkdirSync(tmp, { recursive: true });
+  const ctx = await b.newContext({
+    viewport: size,
+    deviceScaleFactor: 1,
+    locale: "zh-CN",
+    recordVideo: { dir: tmp, size },
+  });
+  const page = await ctx.newPage();
+  await page.setContent(cardHTML(content, size, { animate: true }), { waitUntil: "load" });
+  await page.waitForTimeout(Math.round(durSec * 1000));
+  await page.close();
+  const vids = require("node:fs").readdirSync(tmp).filter((n) => n.endsWith(".webm"));
+  await ctx.close();
+  if (!vids.length) throw new Error("recordVideo produced no webm");
+  require("node:fs").renameSync(join(tmp, vids[0]), outPath);
+  require("node:fs").rmdirSync(tmp);
   return outPath;
 }
 
