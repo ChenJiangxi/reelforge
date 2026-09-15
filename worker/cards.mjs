@@ -287,9 +287,45 @@ export async function renderCard(content, size, outPath) {
   const ctx = await b.newContext({ viewport: size, deviceScaleFactor: 1, locale: "zh-CN" });
   const page = await ctx.newPage();
   await page.setContent(cardHTML(content, size), { waitUntil: "load" });
+  const layout = await inspectLayout(page, size);
   await page.screenshot({ path: outPath });
   await ctx.close();
-  return outPath;
+  return { path: outPath, layout };
+}
+
+// 排版毛病用尺子量,不要花钱问视觉模型 —— getBoundingClientRect 给的是准确答案,
+// 模型给的是猜测。(学 MuseDock 的 layoutQaService,只是它跑在整条时间轴上。)
+// 视觉模型仍然要跑,但让它只管"好不好看/信息够不够",不管"有没有溢出"。
+async function inspectLayout(page, { width, height }) {
+  const safeBottom = Math.round(height * 0.17); // 底部字幕安全区
+  return page.evaluate(({ w, h, safeBottom }) => {
+    const issues = [];
+    const seen = new Set();
+    const add = (msg) => { if (!seen.has(msg)) { seen.add(msg); issues.push(msg); } };
+    const label = (el) => (el.className && typeof el.className === "string" ? el.className.split(" ")[0] : el.tagName.toLowerCase());
+    const text = (el) => (el.textContent || "").trim().slice(0, 18);
+
+    for (const el of document.querySelectorAll("body *")) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) continue;
+      const style = getComputedStyle(el);
+      if (style.visibility === "hidden" || style.opacity === "0") continue;
+      const hasOwnText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+
+      if (r.right > w + 1 || r.left < -1) add(`「${text(el)}」横向出画(${label(el)})`);
+      if (r.bottom > h + 1 || r.top < -1) add(`「${text(el)}」纵向出画(${label(el)})`);
+      // 文字被容器裁掉(溢出但没滚动条,截图里就是缺字)
+      if (hasOwnText && style.overflow !== "visible") {
+        if (el.scrollWidth > el.clientWidth + 2) add(`「${text(el)}」被容器裁掉一截(${label(el)})`);
+        if (el.scrollHeight > el.clientHeight + 2) add(`「${text(el)}」下半截被裁(${label(el)})`);
+      }
+      // 正文压进底部字幕安全区(.foot 是设计上就放在那儿的,放过)
+      if (hasOwnText && !el.closest(".foot") && r.bottom > h - safeBottom) {
+        add(`「${text(el)}」压到底部字幕区了(${label(el)})`);
+      }
+    }
+    return issues.slice(0, 6);
+  }, { w: width, h: height, safeBottom });
 }
 
 // 动画卡:Playwright recordVideo 实时录 webm(入场动画在头 ~1.5s,之后静止,

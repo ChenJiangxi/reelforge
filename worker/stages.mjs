@@ -285,20 +285,25 @@ async function footage(item) {
     // 最后一关是硬闸:若 QA 仍说"知识内容用了纯文字卡",强制换结构化卡型。
     let passes = freshDesign ? 2 : 1;
     let lastIssues = [];
+    let layoutIssues = [];
     for (let pass = 1; pass <= passes; pass++) {
-      await renderCard(content, size, png);
+      const rendered = await renderCard(content, size, png);
+      layoutIssues = rendered.layout || [];
       if (!freshDesign) break;
+      // 排版毛病在浏览器里量出来了,视觉模型只管好不好看(它数不准像素)
       const qa = await reviewImage(
         png,
-        `审这张短视频画面卡(口播:"${clip.text}")。清单:1)第一眼是否落在主信息上 2)文字有没有溢出/被裁切/挤出画面 3)底部 17% 字幕安全区有没有被占用 4)有没有错别字/多字漏字 5)卡内容和口播是否相关 6)信息量:如果这卡只有一句短话的大字、而这拍讲的是知识/关系/对比内容,就是不达标(该用关系图/对照表/步骤链)`,
+        `审这张短视频画面卡(口播:"${clip.text}")。清单:1)第一眼是否落在主信息上 2)有没有错别字/多字漏字 3)卡内容和口播是否相关 4)信息量:如果这卡只有一句短话的大字、而这拍讲的是知识/关系/对比内容,就是不达标(该用关系图/对照表/步骤链)。排版溢出不用你管,已经量过了。`,
       );
-      if (qa.ok || pass === passes) { lastIssues = qa.ok ? [] : qa.issues || []; break; }
-      console.log(`  [footage] ${clip.name} QA 打回:${qa.issues?.join(";")} → 重设计`);
+      const issues = [...layoutIssues, ...(qa.ok ? [] : qa.issues || [])];
+      if (!issues.length || pass === passes) { lastIssues = issues; break; }
+      console.log(`  [footage] ${clip.name} 打回:${issues.join(";")} → 重设计`);
       content = await chatJSON(
-        [...PROMPTS.card(item, clip, i, clips.length), { role: "user", content: `上一版被视觉审稿打回:${qa.issues?.join(";")}。针对问题改,返回同样结构的 JSON。` }],
+        [...PROMPTS.card(item, clip, i, clips.length), { role: "user", content: `上一版被打回:${issues.join(";")}。针对问题改(文字太长就删字,别指望缩字号),返回同样结构的 JSON。` }],
         { temperature: 0.4 },
       );
     }
+    if (layoutIssues.length) console.log(`  [footage] ${clip.name} 排版仍有:${layoutIssues.join(";")}`);
     // 硬闸:知识/关系/对比内容不许落在纯文字卡(开头钩子问句除外)
     const isHook = (clip.beat || "") === "hook" || i === 0;
     const infoIssue = lastIssues.some((x) => /信息量|大字|结构/.test(String(x)));
@@ -309,7 +314,7 @@ async function footage(item) {
         { temperature: 0.3 },
       );
       if (content.type === "text") content.type = "diagram";
-      await renderCard(content, size, png);
+      layoutIssues = (await renderCard(content, size, png)).layout || [];
     }
     console.log(`  [footage] ${clip.name} rendered, animating…`);
     const webm = join(dir, `${clip.name}.webm`);
@@ -318,14 +323,31 @@ async function footage(item) {
     const { url: animUrl } = await upload(item.projectId, webm, `card-${clip.name}.webm`);
     console.log(`  [footage] ${clip.name} rendered+animated, uploaded`);
     images.push(url);
-    cards.push({ name: clip.name, text: clip.text, anim: animUrl, ...content });
+    cards.push({ name: clip.name, text: clip.text, anim: animUrl, layout: layoutIssues.length ? layoutIssues : undefined, ...content });
   }
   await closeBrowser();
   const assetCount = cards.filter((c) => c.asset).length;
+  // 全片卡型雷同自检(学 MuseDock 的 low_visual_variety / card_like_layout_overuse):
+  // 单张卡都合格、六张摆一起像同一张图的六个版本 —— 这是最常见的"像 PPT"来源。
+  const designed = cards.filter((c) => !c.asset);
+  const kinds = new Set(designed.map((c) => c.type || "text"));
+  const sameness = [];
+  if (designed.length >= 3 && kinds.size < 3) sameness.push(`${designed.length} 张设计卡只有 ${kinds.size} 种卡型(${[...kinds].join("/")}),整片会像 PPT`);
+  for (const k of kinds) {
+    const n = designed.filter((c) => (c.type || "text") === k).length;
+    if (designed.length >= 4 && n / designed.length >= 0.6) sameness.push(`${k} 卡占了 ${n}/${designed.length}`);
+  }
+  const adjacent = designed.filter((c, i) => i > 0 && (c.type || "text") === (designed[i - 1].type || "text"));
+  if (adjacent.length) sameness.push(`${adjacent.map((c) => c.name).join("/")} 和上一拍同型`);
   return {
     images,
     cards,
-    note: `${images.length} 拍画面(${item.aspect})${assetCount ? `,其中 ${assetCount} 拍用了你的真素材` : ""}。画面和台词是否对得上,请审。`,
+    note: `${images.length} 拍画面(${item.aspect})${assetCount ? `,其中 ${assetCount} 拍用了你的真素材` : ""}。卡型:${designed.map((c) => `${c.name} ${c.type || "text"}`).join("  ")}
+画面和台词是否对得上,请审。${
+      cards.filter((c) => c.layout?.length).length
+        ? `\n⚠ 排版自检:${cards.filter((c) => c.layout?.length).map((c) => `${c.name} ${c.layout.join("/")}`).join(";")}`
+        : ""
+    }${sameness.length ? `\n⚠ 雷同自检:${sameness.join(";")}` : ""}`,
   };
 }
 
@@ -735,7 +757,8 @@ async function deliver(item) {
   const cov = await chatJSON(guided(item, PROMPTS.cover(item, t, scriptText)), { temperature: 0.8 });
   const dir = workDir(item, "deliver");
   const png = join(dir, "cover.png");
-  await renderCard({ kicker: "", big: cov.main, sub: cov.sub, type: "text" }, size, png);
+  const coverRender = await renderCard({ kicker: "", big: cov.main, sub: cov.sub, type: "text" }, size, png);
+  if (coverRender.layout?.length) console.log(`  [deliver] 封面排版:${coverRender.layout.join(";")}`);
   await closeBrowser();
   const { url: coverUrl } = await upload(item.projectId, png, "cover.png");
 
