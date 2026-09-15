@@ -9,7 +9,7 @@ import { ffmpeg, ffprobeDur, ffprobeInfo, ffmpegOut } from "./ffmpeg.mjs";
 import { upload, download } from "./board.mjs";
 
 const WORK_ROOT = process.env.WORK_DIR || join(process.cwd(), "data", "work");
-const GAP = 0.25; // silence between clips (seconds), matches ops-bilibili builds
+const GAP = 0.18; // 两拍之间的留白(秒)。原来 0.25,叠上 TTS 自带的空白就太长了
 
 // When she rejects a stage with a note, the note must steer the redo —
 // append it to whatever prompt the stage was going to send.
@@ -68,7 +68,8 @@ export function delivery(profile, say = {}) {
     speed: Number(clamp(profile.speed * clamp(Math.abs(Number(say.speed)), 0.8, 1.15, 1), 0.7, 1.6, profile.speed).toFixed(2)),
     pitch: Math.round(clamp(say.pitch, -6, 6, 0)),
     emotion: EMOTIONS.has(say.emotion) ? say.emotion : undefined,
-    gap: clamp(say.gap_after, 0.05, 1.0, GAP),
+    // 句间留白封在 0.35:真人讲话的句间停顿就是 0.2-0.35s,再长就断气了
+    gap: clamp(say.gap_after, 0.05, 0.35, 0.18),
   };
 }
 
@@ -137,7 +138,9 @@ async function voiceClip(item, clip, dir, tag = "") {
   const profile = VOICES[item.voice] || VOICES["clone-zh"];
   // 念的是 tts(带 <#x#> 停顿标记),字幕用的是 text。念法变了也要重合成,
   // 所以指纹里带上 say —— 光比文本会留下参数改了但音频没换的鬼音。
-  const spoken = stripStageDirections(clip.tts || clip.text);
+  // 句首的 <#x#> 会和上一拍的句尾留白叠加(实测叠出过 1.07s 的大坑),剥掉它 ——
+  // 停顿该由 gap 统一表达,一处一个来源。
+  const spoken = stripStageDirections(clip.tts || clip.text).replace(/^\s*<#[\d.]+#>/, "");
   const d = delivery(profile, clip.say);
   const fingerprint = JSON.stringify([spoken, d.speed, d.pitch, d.emotion ?? "", TTS_MODEL]);
   const wordsFile = join(dir, `${clip.name}${tag}.words.json`);
@@ -148,21 +151,29 @@ async function voiceClip(item, clip, dir, tag = "") {
     if (words) writeFileSync(wordsFile, JSON.stringify(words));
     writeFileSync(marker, fingerprint);
   }
-  let words = null;
-  try { words = JSON.parse(readFileSync(wordsFile, "utf8")); } catch { words = null; }
+  let rawWords = null;
+  try { rawWords = JSON.parse(readFileSync(wordsFile, "utf8")); } catch { rawWords = null; }
 
-  // TTS 经常在句尾多留一大段静音,拼起来每拍之间就莫名拖长 —— 节奏就是这么没的。
-  // 字级时间戳里最后一个字的结束时间就是人声结束点,按它收边(留 0.25s 余韵)。
+  // 每拍首尾都有 TTS 自带的空白,再叠上句尾留白,两拍之间就拖成半秒以上 ——
+  // 听起来就是"一句一句念的",不像一次录下来的。字级时间戳给了准确的人声起止,
+  // 按它把两头收紧(尾部只留 0.08s 收尾,头部空白整个裁掉)。
   const raw = await ffprobeDur(p);
-  const lastEnd = words?.length ? words[words.length - 1][2] / 1000 : null;
-  const tail = lastEnd != null ? raw - lastEnd : 0;
-  const dur = lastEnd != null && tail > 0.35 ? Number((lastEnd + 0.25).toFixed(3)) : raw;
-  if (dur !== raw) console.log(`  [voice] ${clip.name} 尾部静音 ${tail.toFixed(2)}s,按人声收到 ${dur.toFixed(2)}s`);
+  const lastEnd = rawWords?.length ? rawWords[rawWords.length - 1][2] / 1000 : null;
+  const firstStart = rawWords?.length ? rawWords[0][1] / 1000 : 0;
+  // 句首空白 > 0.12s 才裁 —— 再小就是正常起音,裁了反而像被切头
+  const head = firstStart > 0.12 ? Number((firstStart - 0.06).toFixed(3)) : 0;
+  const tailKeep = 0.08;
+  const dur = lastEnd != null ? Number((Math.min(lastEnd + tailKeep, raw) - head).toFixed(3)) : raw - head;
+  if (head > 0 || (lastEnd != null && raw - lastEnd > 0.2)) {
+    console.log(`  [voice] ${clip.name} 收边:头 -${head.toFixed(2)}s 尾 -${lastEnd != null ? (raw - lastEnd - tailKeep).toFixed(2) : "0"}s → ${dur.toFixed(2)}s`);
+  }
   return {
     path: p,
     dur,
-    words,
     gap: d.gap,
+    head,
+    // 裁了头,字幕的时间戳要跟着平移,不然整拍字幕晚 head 秒
+    words: rawWords?.map(([w, b, e]) => [w, Math.max(0, b - Math.round(head * 1000)), Math.max(0, e - Math.round(head * 1000))]) ?? null,
     say: { speed: d.speed, speedRel: clamp(Math.abs(Number(clip.say?.speed)), 0.8, 1.15, 1), pitch: d.pitch, emotion: d.emotion ?? null, gap_after: d.gap },
   };
 }
@@ -390,13 +401,13 @@ function punchier(say = {}) {
 async function renderTake(item, staged, dir, tag, fileBase) {
   const meta = [];
   for (const c of staged) {
-    const { path: p, dur, gap, say, words } = await voiceClip(item, c, dir, tag);
+    const { path: p, dur, gap, say, words, head } = await voiceClip(item, c, dir, tag);
     console.log(`  [voice]${tag ? " B" : " A"} ${c.name} ${dur.toFixed(1)}s @${say.speed.toFixed(2)}x pitch${say.pitch >= 0 ? "+" : ""}${say.pitch} ${say.emotion ?? "auto"} gap${gap}`);
-    meta.push({ name: c.name, beat: c.beat, text: c.text, tts: c.tts || c.text, dur, gap, say, words, file: p });
+    meta.push({ name: c.name, beat: c.beat, text: c.text, tts: c.tts || c.text, dur, gap, say, words, head, file: p });
   }
   const preview = join(dir, `${fileBase}.mp3`);
   const inputs = meta.flatMap((m) => ["-i", m.file]);
-  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,apad,atrim=0:${(m.dur + m.gap).toFixed(3)}[a${i}]`).join(";");
+  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,atrim=${(m.head ?? 0).toFixed(3)}:${((m.head ?? 0) + m.dur).toFixed(3)},asetpts=PTS-STARTPTS,apad=pad_dur=${m.gap.toFixed(3)}[a${i}]`).join(";");
   const concat = meta.map((_, i) => `[a${i}]`).join("") + `concat=n=${meta.length}:v=0:a=1[a]`;
   await ffmpeg([...inputs, "-filter_complex", filters + ";" + concat, "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "4", preview]);
   const { url } = await upload(item.projectId, preview, `${fileBase}.mp3`);
@@ -442,7 +453,7 @@ async function voice(item) {
   if (flat.length >= 2) warn.push(`${flat.map((m) => m.name).join("/")} 和上一拍念法完全一样`);
   const warnLine = warn.length ? `\n⚠ 配音自检:${warn.join(";")}` : "";
 
-  const pick = ({ name, beat, text, tts, dur, gap, say, words }) => ({ name, beat, text, tts, dur, gap, say, words });
+  const pick = ({ name, beat, text, tts, dur, gap, say, words, head }) => ({ name, beat, text, tts, dur, gap, say, words, head });
   return {
     audio: takeA.url,
     wave: takeA.waveUrl,
@@ -611,7 +622,7 @@ async function edit(item) {
 
   // 3) voice track: each clip padded to its segment length, then concat
   const inputs = voices.flatMap((v) => ["-i", v]);
-  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,volume=5dB,apad,atrim=0:${(m.dur + (m.gap ?? GAP)).toFixed(3)}[a${i}]`).join(";");
+  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,volume=5dB,atrim=${(m.head ?? 0).toFixed(3)}:${((m.head ?? 0) + m.dur).toFixed(3)},asetpts=PTS-STARTPTS,apad=pad_dur=${(m.gap ?? GAP).toFixed(3)}[a${i}]`).join(";");
   const concatF = meta.map((_, i) => `[a${i}]`).join("") + `concat=n=${meta.length}:v=0:a=1[av]`;
   const voiceM4a = join(dir, "voice.m4a");
   await ffmpeg([...inputs, "-filter_complex", filters + ";" + concatF, "-map", "[av]", voiceM4a]);
