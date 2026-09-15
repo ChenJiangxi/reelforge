@@ -49,6 +49,16 @@ export function platformForAspect(aspect: string): string {
 }
 
 // Media fields hold /api/media/<projectId>/<file> URLs served from MEDIA_DIR.
+export type VoiceMeta = {
+  clips: {
+    name: string; beat?: string; text: string; tts?: string; dur: number; gap?: number;
+    /** MiniMax 字级时间戳 [字, 开始ms, 结束ms] —— 字幕按它对齐 */
+    words?: [string, number, number][];
+    say?: { speed: number; speedRel?: number; pitch: number; emotion: string | null; gap_after?: number };
+  }[];
+  gap?: number;
+};
+
 export type Artifacts = {
   video?: string;
   audio?: string;
@@ -60,15 +70,14 @@ export type Artifacts = {
   images?: string[];
   clips?: { name: string; text: string; visual?: string }[];
   cards?: { name: string; text?: string; type?: string; kicker?: string; big?: string; sub?: string; foot?: string }[];
-  voiceMeta?: {
-    clips: {
-      name: string; beat?: string; text: string; tts?: string; dur: number; gap?: number;
-      /** MiniMax 字级时间戳 [字, 开始ms, 结束ms] —— 字幕按它对齐 */
-      words?: [string, number, number][];
-      say?: { speed: number; speedRel?: number; pitch: number; emotion: string | null; gap_after?: number };
-    }[];
-    gap?: number;
+  /** 配音的两版念法 —— 她听完点一个(见 /api/project/[id]/voice-take) */
+  takes?: {
+    a: { label: string; audio: string; wave?: string; total?: number };
+    b: { label: string; audio: string; wave?: string; total?: number };
+    picked?: "a" | "b";
   };
+  voiceMetaAlt?: VoiceMeta;
+  voiceMeta?: VoiceMeta;
   subs?: { text: string; start: number; end: number }[];
   topic?: { angle?: string; hook?: string; claims?: string[]; avoid?: string[]; title?: string };
 };

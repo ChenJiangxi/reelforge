@@ -115,7 +115,7 @@ export function PreviewPane({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        <StageArtifact stage={view} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} dropProps={dropProps} over={over} />
+        <StageArtifact stage={view} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} dropProps={dropProps} over={over} onSelect={onSelect} />
       </div>
 
       {showTracks && (
@@ -138,6 +138,7 @@ function StageArtifact({
   projectId,
   dropProps,
   over,
+  onSelect,
 }: {
   stage: StageView;
   vertical: boolean;
@@ -147,6 +148,7 @@ function StageArtifact({
   projectId: string;
   dropProps?: (clip: string) => Record<string, unknown>;
   over?: string | null;
+  onSelect?: (id: string | null) => void;
 }) {
   const a = stage.artifacts;
 
@@ -164,7 +166,7 @@ function StageArtifact({
     return (
       <>
         <p className="mx-auto mb-3 max-w-2xl text-center text-xs text-accent">重做排队中 —— 下面是上一版,新版出来自动替换</p>
-        <StageArtifact stage={{ ...stage, status: "approved" }} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} dropProps={dropProps} over={over} />
+        <StageArtifact stage={{ ...stage, status: "approved" }} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} dropProps={dropProps} over={over} onSelect={onSelect} />
       </>
     );
   }
@@ -201,15 +203,7 @@ function StageArtifact({
   } else if (stage.kind === "footage" && a.images?.length) {
     body = <CardStrip images={a.images} cards={a.cards ?? []} />;
   } else if (stage.kind === "voice") {
-    body = (
-      <div className="mx-auto flex max-w-2xl flex-col items-center gap-4 rounded-lg bg-card p-5">
-        {(a.wave || wave) && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={a.wave ?? wave} alt="波形" className="w-full rounded border border-border" />
-        )}
-        {(a.audio || audio) && <audio controls className="w-full" src={a.audio ?? audio} autoPlay />}
-      </div>
-    );
+    body = <VoiceTakes stage={stage} projectId={projectId} fallback={{ audio, wave }} onSelect={onSelect} />;
   } else if (a.video) {
     body = <VideoWithBeatRail stage={stage} vertical={vertical} clips={clips} dropProps={dropProps} over={over} />;
   } else if (stage.kind === "deliver") {
@@ -314,6 +308,110 @@ function ScriptEditor({ stage, projectId }: { stage: StageView; projectId: strin
         </button>
         <span className="ml-auto text-xs text-muted-foreground">你的版本就是定稿,配音/画面/剪辑自动跟着重出</span>
       </div>
+    </div>
+  );
+}
+
+// ── 配音:两版念法摆一起听,点一个定稿 ──────────────────────────────
+// 配音好不好听没法用规则定死,与其猜,不如给两个方向明确不同的版本让她选。
+// 选完了这个方向会写回脚本,之后重出不会打回原形。
+
+function VoiceTakes({
+  stage,
+  projectId,
+  fallback,
+  onSelect,
+}: {
+  stage: StageView;
+  projectId: string;
+  fallback: { audio?: string; wave?: string };
+  onSelect?: (id: string | null) => void;
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<string | null>(null);
+  const a = stage.artifacts;
+  const takes = a.takes;
+  // 定稿之后也允许换回来:听完成片才发现节奏不对是常事,回到这一步点另一版
+  // 比打回重出快得多(换版只重出剪辑/字幕,稿子和画面都不动)。
+  const canPick = stage.status === "awaiting_review" || stage.status === "approved";
+
+  async function pick(take: "a" | "b") {
+    if (busy) return;
+    setBusy(take);
+    await fetch(`/api/project/${projectId}/voice-take`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ take }),
+    });
+    setBusy(null);
+    // 选完这个阶段就不再"待审"了,不钉住的话预览会跳回第一个阶段 —— 她刚点完的东西不该消失
+    onSelect?.(stage.id);
+    router.refresh();
+  }
+
+  // 老项目只有一版
+  if (!takes) {
+    return (
+      <div className="mx-auto flex max-w-2xl flex-col items-center gap-4 rounded-lg bg-card p-5">
+        {(a.wave || fallback.wave) && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={a.wave ?? fallback.wave} alt="波形" className="w-full rounded border border-border" />
+        )}
+        {(a.audio || fallback.audio) && <audio controls className="w-full" src={a.audio ?? fallback.audio} autoPlay />}
+      </div>
+    );
+  }
+
+  const rows: { key: "a" | "b"; t: NonNullable<Artifacts["takes"]>["a"] }[] = [
+    { key: "a", t: takes.a },
+    { key: "b", t: takes.b },
+  ];
+
+  return (
+    <div className="mx-auto flex h-full w-full max-w-2xl flex-col gap-3 overflow-y-auto">
+      {rows.map(({ key, t }, i) => {
+        const current = takes.picked === key;
+        return (
+          <div
+            key={key}
+            className={`flex flex-col gap-2 rounded-lg p-4 ${current ? "bg-accent-soft/50" : "bg-card"}`}
+          >
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs text-muted-foreground">{i === 0 ? "A" : "B"}</span>
+              <span className="text-sm font-medium">{t.label}</span>
+              {t.total != null && <span className="font-mono text-xs text-muted-foreground">{t.total}s</span>}
+              {current && <span className="text-xs font-medium text-accent">当前用的是这版</span>}
+              {canPick && (
+                <button
+                  onClick={() => pick(key)}
+                  disabled={!!busy || (current && stage.status !== "awaiting_review")}
+                  className={`ml-auto rounded-full px-3 py-1 text-xs font-medium disabled:opacity-40 ${
+                    current
+                      ? "border border-border text-muted-foreground hover:border-foreground/30"
+                      : "bg-foreground text-background hover:opacity-85"
+                  }`}
+                >
+                  {busy === key
+                    ? "定稿中…"
+                    : current
+                      ? stage.status === "awaiting_review" ? "就用这版,继续往下" : "用的就是这版"
+                      : stage.status === "awaiting_review" ? "换成这版" : "换成这版,重出剪辑"}
+                </button>
+              )}
+            </div>
+            {t.wave && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={t.wave} alt={`${t.label}波形`} className="h-14 w-full rounded border border-border object-cover" />
+            )}
+            <audio controls className="w-full" src={t.audio} />
+          </div>
+        );
+      })}
+      {stage.status === "awaiting_review" && (
+        <p className="text-center text-xs text-muted-foreground">
+          两版都不对就用下面的「打回」,直接说"第3拍太平""开头再快点"
+        </p>
+      )}
     </div>
   );
 }

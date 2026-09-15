@@ -131,16 +131,16 @@ function sayToInput(say) {
   return { speed: say.speedRel, pitch: say.pitch, emotion: say.emotion ?? undefined, gap_after: say.gap_after };
 }
 
-async function voiceClip(item, clip, dir) {
-  const p = join(dir, `${clip.name}.mp3`);
-  const marker = join(dir, `${clip.name}.txt`);
+async function voiceClip(item, clip, dir, tag = "") {
+  const p = join(dir, `${clip.name}${tag}.mp3`);
+  const marker = join(dir, `${clip.name}${tag}.txt`);
   const profile = VOICES[item.voice] || VOICES["clone-zh"];
   // 念的是 tts(带 <#x#> 停顿标记),字幕用的是 text。念法变了也要重合成,
   // 所以指纹里带上 say —— 光比文本会留下参数改了但音频没换的鬼音。
   const spoken = stripStageDirections(clip.tts || clip.text);
   const d = delivery(profile, clip.say);
   const fingerprint = JSON.stringify([spoken, d.speed, d.pitch, d.emotion ?? "", TTS_MODEL]);
-  const wordsFile = join(dir, `${clip.name}.words.json`);
+  const wordsFile = join(dir, `${clip.name}${tag}.words.json`);
   const stale = !existsSync(p) || !existsSync(marker) || readFileSync(marker, "utf8") !== fingerprint;
   if (stale) {
     const { audio, words } = await tts(spoken, profile, clip.say);
@@ -373,36 +373,66 @@ async function withDelivery(item, clips) {
   });
 }
 
+// B 版 = 同一份稿子"再冲一点"的念法:整体快一档、亮一档、留白短一档。
+// 不是随机换参数 —— 是给她一个明确的方向选择(稳 vs 冲),选完了才知道这条片该往哪走。
+function punchier(say = {}) {
+  const emotion = say.emotion === "calm" ? "fluent" : say.emotion === "fluent" ? "happy" : say.emotion;
+  return {
+    ...say,
+    speed: Math.min(1.15, (Number(say.speed) || 1) * 1.08),
+    pitch: Math.min(3, Math.round(Number(say.pitch) || 0) + 1),
+    emotion,
+    gap_after: Math.max(0.05, Number((((Number(say.gap_after) || 0.25) * 0.78)).toFixed(2))),
+  };
+}
+
+// 合成一整版配音(一个 take):逐拍 TTS → 拼成一条能从头听到尾的 mp3 → 出波形图。
+async function renderTake(item, staged, dir, tag, fileBase) {
+  const meta = [];
+  for (const c of staged) {
+    const { path: p, dur, gap, say, words } = await voiceClip(item, c, dir, tag);
+    console.log(`  [voice]${tag ? " B" : " A"} ${c.name} ${dur.toFixed(1)}s @${say.speed.toFixed(2)}x pitch${say.pitch >= 0 ? "+" : ""}${say.pitch} ${say.emotion ?? "auto"} gap${gap}`);
+    meta.push({ name: c.name, beat: c.beat, text: c.text, tts: c.tts || c.text, dur, gap, say, words, file: p });
+  }
+  const preview = join(dir, `${fileBase}.mp3`);
+  const inputs = meta.flatMap((m) => ["-i", m.file]);
+  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,apad,atrim=0:${(m.dur + m.gap).toFixed(3)}[a${i}]`).join(";");
+  const concat = meta.map((_, i) => `[a${i}]`).join("") + `concat=n=${meta.length}:v=0:a=1[a]`;
+  await ffmpeg([...inputs, "-filter_complex", filters + ";" + concat, "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "4", preview]);
+  const { url } = await upload(item.projectId, preview, `${fileBase}.mp3`);
+  const wave = join(dir, `${fileBase}-wave.png`);
+  await ffmpeg(["-i", preview, "-filter_complex", "showwavespic=s=1800x140:colors=#e8622c", "-frames:v", "1", wave]);
+  const { url: waveUrl } = await upload(item.projectId, wave, `${fileBase}-wave.png`);
+  const total = meta.reduce((n, m) => n + m.dur + m.gap, 0);
+  return { url, waveUrl, total, meta };
+}
+
+function takeSummary(meta) {
+  return meta
+    .map((m) => `${m.name} ${m.dur.toFixed(1)}s @${m.say.speed.toFixed(2)}x${m.say.pitch ? ` pitch${m.say.pitch > 0 ? "+" : ""}${m.say.pitch}` : ""}${m.say.emotion ? ` ${m.say.emotion}` : ""}${/<#[\d.]+#>/.test(m.tts) ? " ⏸" : ""}`)
+    .join("\n");
+}
+
 async function voice(item) {
   const clips = item.upstream?.script?.clips;
   if (!clips?.length) throw new Error("上游脚本没有 clips");
   const dir = workDir(item, "voice");
   const profile = VOICES[item.voice] || VOICES["clone-zh"];
   const staged = await withDelivery(item, clips);
-  const meta = [];
-  for (const c of staged) {
-    const { path: p, dur, gap, say, words } = await voiceClip(item, c, dir);
-    console.log(`  [voice] ${c.name} ${dur.toFixed(1)}s @${say.speed.toFixed(2)}x pitch${say.pitch >= 0 ? "+" : ""}${say.pitch} ${say.emotion ?? "auto"} gap${gap}`);
-    meta.push({ name: c.name, beat: c.beat, text: c.text, tts: c.tts || c.text, dur, gap, say, words, file: p });
-  }
-  // preview: one mp3 she can listen to straight through
-  const preview = join(dir, "preview.mp3");
-  const inputs = meta.flatMap((m) => ["-i", m.file]);
-  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,apad,atrim=0:${(m.dur + m.gap).toFixed(3)}[a${i}]`).join(";");
-  const concat = meta.map((_, i) => `[a${i}]`).join("") + `concat=n=${meta.length}:v=0:a=1[a]`;
-  await ffmpeg([...inputs, "-filter_complex", filters + ";" + concat, "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "4", preview]);
-  const { url } = await upload(item.projectId, preview, "voice-preview.mp3");
-  // waveform image for the editor's audio track (like an NLE timeline)
-  const wave = join(dir, "voice-wave.png");
-  await ffmpeg(["-i", preview, "-filter_complex", "showwavespic=s=1800x140:colors=#e8622c", "-frames:v", "1", wave]);
-  const { url: waveUrl } = await upload(item.projectId, wave, "voice-wave.png");
-  const total = meta.reduce((n, m) => n + m.dur + m.gap, 0);
-  const dev = Math.abs(total - item.duration) / item.duration;
+
+  // 出两版让她挑。配音是这条片里最难用规则定死的一步 —— 与其我猜"什么叫更好听",
+  // 不如给两个方向明确不同的版本,她听完点一个。TTS 很便宜,多一版值这个钱。
+  const takeA = await renderTake(item, staged, dir, "", "voice-preview");
+  const stagedB = staged.map((c) => ({ ...c, say: punchier(c.say) }));
+  const takeB = await renderTake(item, stagedB, dir, "-b", "voice-preview-b");
+
+  const meta = takeA.meta;
+  const dev = Math.abs(takeA.total - item.duration) / item.duration;
   const warn = [];
   if (dev > 0.3) warn.push(`配音总长偏离目标 ${Math.round(dev * 100)}%(目标 ~${item.duration}s)`);
   const longClip = meta.find((m) => m.dur > 20);
   if (longClip) warn.push(`${longClip.name} 太长(${longClip.dur.toFixed(1)}s),可能念不过来`);
-  // 念经自检:整片语速挤在一起 / 没人停顿 = 平。这是这条片子最常见的死法。
+  // 念经自检:整片语速挤在一起 / 没有停顿 = 平。这是这条片子最常见的死法。
   const speeds = meta.map((m) => m.say.speed);
   const spread = Math.max(...speeds) - Math.min(...speeds);
   if (spread < 0.12) warn.push(`整片语速几乎没变化(最快 ${Math.max(...speeds).toFixed(2)}x / 最慢 ${Math.min(...speeds).toFixed(2)}x),听起来会像念经`);
@@ -411,17 +441,23 @@ async function voice(item) {
   const flat = meta.filter((m, i) => i > 0 && Math.abs(m.say.speed - meta[i - 1].say.speed) < 0.03 && m.say.emotion === meta[i - 1].say.emotion);
   if (flat.length >= 2) warn.push(`${flat.map((m) => m.name).join("/")} 和上一拍念法完全一样`);
   const warnLine = warn.length ? `\n⚠ 配音自检:${warn.join(";")}` : "";
-  const sayLine = meta
-    .map((m) => `${m.name} ${m.dur.toFixed(1)}s @${m.say.speed.toFixed(2)}x${m.say.pitch ? ` pitch${m.say.pitch > 0 ? "+" : ""}${m.say.pitch}` : ""}${m.say.emotion ? ` ${m.say.emotion}` : ""}${/<#[\d.]+#>/.test(m.tts) ? " ⏸" : ""}`)
-    .join("\n");
+
+  const pick = ({ name, beat, text, tts, dur, gap, say, words }) => ({ name, beat, text, tts, dur, gap, say, words });
   return {
-    audio: url,
-    wave: waveUrl,
-    voiceMeta: { clips: meta.map(({ name, beat, text, tts, dur, gap, say, words }) => ({ name, beat, text, tts, dur, gap, say, words })), gap: GAP },
-    note: `音色 ${profile.voice_id} 基准 ${profile.speed}x(${TTS_MODEL}),共 ${total.toFixed(1)}s(${meta.length} 句)。
-每拍的念法(语速是基准的倍数,⏸ = 句中有停顿):
-${sayLine}
-节奏够不够、哪拍该快该慢,请审听——打回时直接点名"第3拍太平/开头再快点",下一版照着改。${warnLine}`,
+    audio: takeA.url,
+    wave: takeA.waveUrl,
+    voiceMeta: { clips: meta.map(pick), gap: GAP },
+    takes: {
+      a: { label: "稳一点", audio: takeA.url, wave: takeA.waveUrl, total: Number(takeA.total.toFixed(1)) },
+      b: { label: "冲一点", audio: takeB.url, wave: takeB.waveUrl, total: Number(takeB.total.toFixed(1)) },
+      picked: "a",
+    },
+    voiceMetaAlt: { clips: takeB.meta.map(pick), gap: GAP },
+    note: `音色 ${profile.voice_id} 基准 ${profile.speed}x(${TTS_MODEL})。两版都在上面,听完点"用这版"。
+A 稳一点 ${takeA.total.toFixed(1)}s / B 冲一点 ${takeB.total.toFixed(1)}s(整体快一档、亮一档、留白更短)。
+A 版每拍的念法(语速是基准的倍数,⏸ = 句中有停顿):
+${takeSummary(meta)}
+两版都不对就打回,直接点名"第3拍太平/开头再快点",下一版照着改。${warnLine}`,
   };
 }
 
@@ -460,8 +496,9 @@ async function ensureInputs(item) {
   for (const m of meta || []) {
     const p = join(voiceDir, `${m.name}.mp3`);
     // m 来自 voiceMeta,带着当时的 tts 文本和念法 —— 重新生成必须用同一套,
-    // 不然补出来的那一拍念法和其他拍对不上。
-    if (!existsSync(p)) await voiceClip(item, { ...m, say: sayToInput(m.say) }, voiceDir);
+    // 不然补出来的那一拍念法和其他拍对不上。不能因为"文件已存在"就跳过:
+    // 她选了另一版念法时文件名没变、参数变了,靠 voiceClip 里的指纹比对重合成。
+    await voiceClip(item, { ...m, say: sayToInput(m.say) }, voiceDir);
     voices.push(p);
   }
   return { visuals, voices, meta };
