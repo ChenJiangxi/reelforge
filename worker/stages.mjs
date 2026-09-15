@@ -281,7 +281,7 @@ async function footage(item) {
         const local = join(workDir(item, "assets"), asset.name);
         if (!existsSync(local)) await download(asset.url, local);
         const poster = join(dir, `${clip.name}-poster.png`);
-        await ffmpeg(["-ss", "0.5", "-i", local, "-frames:v", "1", "-vf", `scale=${size.width}:${size.height}:force_original_aspect_ratio=increase,crop=${size.width}:${size.height}`, poster]);
+        await ffmpeg(["-ss", "0.5", "-i", local, "-frames:v", "1", "-vf", `scale=${size.width}:${size.height}:force_original_aspect_ratio=increase,crop=${size.width}:${size.height},setsar=1`, poster]);
         const up = await upload(item.projectId, poster, `asset-${clip.name}-poster.png`);
         posterUrl = up.url;
       }
@@ -655,13 +655,16 @@ async function edit(item) {
     const frames = Math.ceil(segDur * fps);
     const seg = join(dir, `seg-${meta[i].name}.mp4`);
     if (visuals[i].kind === "video" || visuals[i].kind === "anim") {
-      await ffmpeg(["-stream_loop", "-1", "-i", visuals[i].path, "-t", segDur.toFixed(3), "-vf", `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${fps},format=yuv420p`, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
+      // setsar=1 是关键:素材视频如果带着非方形像素的 SAR/DAR 元数据(实见她的一个
+      // 上传素材,scale+crop 完全不会清掉这个标签,原样传到最终成片,变成
+      // "编码尺寸 1080x1920,但播放器按 5040x1920 显示"——横向被拉伸成宽屏。
+      await ffmpeg(["-stream_loop", "-1", "-i", visuals[i].path, "-t", segDur.toFixed(3), "-vf", `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,fps=${fps},format=yuv420p`, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
     } else {
       const move = pickCamera(meta[i].beat, i, lastMove);
       lastMove = move;
       cameraLog.push(`${meta[i].name} ${move}`);
       const m = CAM_MOVES[move](frames);
-      const zoom = `scale=${W * 2}:${H * 2}:flags=lanczos,zoompan=z='${m.z}':x='${m.x}':y='${m.y}':d=1:s=${W}x${H}:fps=${fps},format=yuv420p`;
+      const zoom = `scale=${W * 2}:${H * 2}:flags=lanczos,zoompan=z='${m.z}':x='${m.x}':y='${m.y}':d=1:s=${W}x${H}:fps=${fps},setsar=1,format=yuv420p`;
       await ffmpeg(["-loop", "1", "-framerate", String(fps), "-t", segDur.toFixed(3), "-i", visuals[i].path, "-vf", zoom, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
     }
     console.log(`  [edit] seg ${meta[i].name} ${segDur.toFixed(1)}s done (${visuals[i].kind}${lastMove ? ", " + lastMove : ""})`);
