@@ -2,13 +2,15 @@
 // The video is a sequence of 分句 clips (大字卡 + 配音), so "对话剪辑" =
 // natural-language ops on that clip list, then downstream stages regenerate.
 
-export type Clip = { name: string; text: string; visual?: string; asset?: string };
+export type Say = { speed?: number; pitch?: number; emotion?: string; gap_after?: number };
+export type Clip = { name: string; text: string; tts?: string; say?: Say; visual?: string; asset?: string };
 
 export type ChatOp =
   | { action: "edit_text"; clip: string; text: string }
   | { action: "delete_clip"; clip: string }
   | { action: "insert_after"; clip: string; text: string; visual?: string }
   | { action: "edit_visual"; clip: string; visual: string }
+  | { action: "edit_delivery"; clip: string; say: Say }
   | { action: "assign_asset"; clip: string; asset: string }
   | { action: "redo_stage"; kind: string; note: string }
   | { action: "review"; decision: "approve" | "reject"; note?: string }
@@ -62,6 +64,9 @@ review 操作优先于一切普通操作——她在审,不是在下新需求。
 - {"action":"delete_clip","clip":"c04"} 删某句
 - {"action":"insert_after","clip":"c04","text":"新句子","visual":"画面简报"} 在某句后插一句
 - {"action":"edit_visual","clip":"c02","visual":"新画面简报"} 只改某句的画面卡
+- {"action":"edit_delivery","clip":"c01","say":{"speed":1.2,"pitch":2,"emotion":"surprised","gap_after":0.1}} 只改某句"怎么念"
+  (她说"第1拍快一点/开头再冲一点/这句慢下来压住/这里停一下"就用它,只重出配音,画面不动)
+  speed 是相对基准音色的倍率 0.82-1.25,pitch -3~3,emotion∈happy|surprised|calm|fluent|sad|angry,gap_after 是句尾留白秒数 0.05-0.6
 - {"action":"assign_asset","clip":"c03","asset":"素材文件名"} 指定某拍用素材库里的录屏/图片
 - {"action":"redo_stage","kind":"阶段","note":"具体修改指示"} 重做整个阶段(阶段∈ topic|script|footage|voice|edit|subtitles|deliver;用于"封面换一版""配音慢点""文案重写"这类整阶段的活)
 - {"action":"reply","text":"回复"} 不需要改片子(闲聊/提问),直接回话
@@ -108,7 +113,8 @@ export function applyOps(clips: Clip[], ops: ChatOp[]): { clips: Clip[]; voiceDi
   for (const op of ops) {
     if (op.action === "edit_text") {
       const i = idx(op.clip);
-      if (i >= 0 && op.text?.trim()) { out[i] = { ...out[i], text: op.text.trim() }; voiceDirty = true; }
+      // 台词换了,旧的 tts(带停顿标记的那份)就作废了 —— 留着会照旧句子念
+      if (i >= 0 && op.text?.trim()) { out[i] = { ...out[i], text: op.text.trim(), tts: undefined }; voiceDirty = true; }
     } else if (op.action === "delete_clip") {
       const i = idx(op.clip);
       if (i >= 0) { out.splice(i, 1); voiceDirty = true; footageDirty = true; }
@@ -117,6 +123,12 @@ export function applyOps(clips: Clip[], ops: ChatOp[]): { clips: Clip[]; voiceDi
       if (i >= 0 && op.text?.trim()) {
         out.splice(i + 1, 0, { name: "tmp", text: op.text.trim(), visual: op.visual });
         voiceDirty = true; footageDirty = true;
+      }
+    } else if (op.action === "edit_delivery") {
+      const i = idx(op.clip);
+      if (i >= 0 && op.say) {
+        out[i] = { ...out[i], say: { ...(out[i].say ?? {}), ...op.say } };
+        voiceDirty = true; // 念法变了只要重配音,画面不用动
       }
     } else if (op.action === "edit_visual") {
       const i = idx(op.clip);

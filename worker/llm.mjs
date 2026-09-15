@@ -42,7 +42,23 @@ export async function chatJSON(messages, opts = {}) {
   const text = await chat(messages, opts);
   const m = text.match(/\{[\s\S]*\}/);
   if (!m) throw new Error(`no JSON in LLM reply: ${text.slice(0, 200)}`);
-  return JSON.parse(m[0]);
+  try {
+    return JSON.parse(m[0]);
+  } catch (e) {
+    // 实见的污染:数字被包进字母/竖线(`"speed": II0.95II`)、尾逗号、中文引号。
+    // 整个阶段因为一个脏字符 FAILED 停在那儿,比修一次贵得多。
+    const fixed = m[0]
+      .replace(/:\s*[A-Za-z|]{1,3}(-?\d+(?:\.\d+)?)[A-Za-z|]{1,3}\s*(?=[,}\]])/g, ": $1")
+      .replace(/,\s*(?=[}\]])/g, "")
+      .replace(/[""]/g, '"');
+    try {
+      const out = JSON.parse(fixed);
+      console.log("[llm] JSON 有脏字符,已修复后解析");
+      return out;
+    } catch {
+      throw new Error(`bad JSON from LLM: ${e.message}. head=${m[0].slice(0, 160)}`);
+    }
+  }
 }
 
 // Vision pass for rendered cards — gemini-2.5-flash-lite ($0.10/M in) actually

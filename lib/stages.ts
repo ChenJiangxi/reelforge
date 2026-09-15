@@ -60,7 +60,13 @@ export type Artifacts = {
   images?: string[];
   clips?: { name: string; text: string; visual?: string }[];
   cards?: { name: string; text?: string; type?: string; kicker?: string; big?: string; sub?: string; foot?: string }[];
-  voiceMeta?: { clips: { name: string; text: string; dur: number }[]; gap?: number };
+  voiceMeta?: {
+    clips: {
+      name: string; text: string; tts?: string; dur: number; gap?: number;
+      say?: { speed: number; speedRel?: number; pitch: number; emotion: string | null; gap_after?: number };
+    }[];
+    gap?: number;
+  };
   subs?: { text: string; start: number; end: number }[];
   topic?: { angle?: string; hook?: string; claims?: string[]; avoid?: string[]; title?: string };
 };

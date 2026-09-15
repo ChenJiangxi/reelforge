@@ -39,13 +39,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             content: `你是分镜师。用户改好了一篇口播稿,你唯一的活:把它按节拍切成 clips。
 铁律:文字一个标点都不能改——你只是分段,不是编辑。
 每拍 1-3 句完整意思(8-15 秒配音量),开头钩子句单独一拍。
-返回 JSON:{"clips":[{"text":"原文原句","beat":"hook|context|evidence|turn|landing","visual_type":"text|data|quote|contrast|step","visual":"画面简报"}]}
-text 拼起来必须等于原文(允许去掉多余空行)。visual 沿用旧简报:文字没变的拍,直接抄旧 clips 里的 visual;新拍自己写。`,
+同时给每拍标出"怎么念"(say/tts),否则整片会一个语速念到尾,像念经。
+返回 JSON:{"clips":[{"text":"原文原句","tts":"同一句话,可插 <#0.3#> 停顿标记","say":{"speed":1.0,"pitch":0,"emotion":"fluent","gap_after":0.25},"beat":"hook|context|evidence|turn|landing","visual_type":"text|data|quote|contrast|step","visual":"画面简报"}]}
+text 拼起来必须等于原文(允许去掉多余空行)——tts 里除了 <#x#> 标记,一个字也不许多不许少。
+visual/say 沿用旧简报:文字没变的拍,直接抄旧 clips 里的 visual 和 say;新拍自己定。
+念法规矩:钩子 speed 1.12-1.25、pitch +1~+3;落点 speed 0.85-0.95、pitch -2;
+转折那拍开头先 <#0.4#>;关键数字前 <#0.25#>;相邻两拍 speed 至少差 0.08。`,
           },
           {
             role: "user",
-            content: `旧 clips(供沿用 visual):
-${JSON.stringify(oldClips.map((c: { text: string; visual?: string }) => ({ text: c.text, visual: c.visual })), null, 1)}
+            content: `旧 clips(供沿用 visual/say):
+${JSON.stringify(oldClips.map((c: { text: string; visual?: string; say?: unknown }) => ({ text: c.text, visual: c.visual, say: c.say })), null, 1)}
 
 她改好的稿子(全文,逐字保留):
 ${text}`,
@@ -61,6 +65,11 @@ ${text}`,
   // LLM 挂了也能存:整段当一拍,人工兜底
   if (!Array.isArray(clips) || !clips.length) {
     clips = [{ text, beat: "hook", visual_type: "text", visual: "" }];
+  }
+  // LLM 偶尔把停顿标记漏进 text(字幕会念出 <#0.3#>),或者 tts 把字改了 —— 两边都兜底
+  for (const c of clips as { text: string; tts?: string }[]) {
+    c.text = String(c.text ?? "").replace(/<#[\d.]+#>/g, "");
+    if (c.tts && c.tts.replace(/<#[\d.]+#>/g, "") !== c.text) c.tts = undefined;
   }
   clips.forEach((c: { name?: string }, i: number) => { c.name = `c${String(i + 1).padStart(2, "0")}`; });
 

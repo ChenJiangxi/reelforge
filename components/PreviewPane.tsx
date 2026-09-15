@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { stageLabel, type Artifacts, type Comment } from "@/lib/stages";
 
-export type ClipThumb = { name: string; text: string; image?: string; dur?: number };
+export type ClipThumb = { name: string; text: string; image?: string; dur?: number; gap?: number };
 export type StageView = {
   id: string;
   kind: string;
@@ -467,13 +467,13 @@ function VideoWithBeatRail({
   over?: string | null;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const GAP = 0.25;
+  const GAP = 0.25; // 兜底:旧项目的 voiceMeta 里没有每拍 gap
   const offsets: number[] = [];
   {
     let t = 0;
     for (const c of clips) {
       offsets.push(t);
-      t += (c.dur ?? 0) + GAP;
+      t += (c.dur ?? 0) + (c.gap ?? GAP);
     }
   }
   const seek = (i: number) => {

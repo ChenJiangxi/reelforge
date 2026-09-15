@@ -51,6 +51,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       text: c.text,
       image: footage.images?.[i],
       dur: voice.voiceMeta?.clips?.[i]?.dur,
+      gap: voice.voiceMeta?.clips?.[i]?.gap,
     }),
   );
 

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 // 教案在线化:worker 从服务器拉取(/playbooks 页可在线编辑),本地文件兜底。
 // 教案改了,下一条片就按新的来——这就是"每步都有优化空间"的实体。
-const PLAYBOOK_NAMES = ["topic", "script", "critique", "visual"];
+const PLAYBOOK_NAMES = ["topic", "script", "critique", "visual", "voice"];
 const playbooks = {};
 
 function localRead(name) {
@@ -77,10 +77,13 @@ ${item.artifacts?.material ? `\n参考材料(真实资料,内容优先从这里�
   script: (item, topic) => [
     {
       role: "system",
-      content: `你是短视频口播编剧。写的是一篇"能一口气念下来"的稿子,不是金句清单。
+      content: `你是短视频口播编剧,同时负责标出这稿子"怎么念"。写的是一篇"能一口气念下来"的稿子,不是金句清单。
 ${TASTE}
 
-${playbook("script")}`,
+${playbook("script")}
+
+——— 配音教案(每拍的 say/tts 按这个给) ———
+${playbook("voice")}`,
     },
     {
       role: "user",
@@ -99,13 +102,23 @@ ${topic.material ? `参考材料(真实资料,数字/案例从这里出):\n${top
     {
       "name": "c01",
       "beat": "hook|context|evidence|turn|landing 之一",
-      "text": "这个节拍的口播(1-3句完整的话)",
+      "text": "这个节拍的口播(1-3句完整的话,干净文本,字幕用它)",
+      "tts": "同一句话,但按配音教案插入停顿标记 <#0.3#>(秒,0.05-1.2)。没有需要停的地方就跟 text 一模一样",
+      "say": {
+        "speed": 0.85,
+        "pitch": -2,
+        "emotion": "happy|surprised|calm|fluent|sad|angry 之一",
+        "gap_after": 0.3
+      },
       "visual_type": "text|data|quote|contrast|step|diagram|table|flow 之一",
       "visual": "画面简报:这拍卡上要出现什么具体内容"
     }
   ]
 }
-clips 5-7 个,全片覆盖 hook→landing 完整弧线。text 加起来就是 narration,不许缺段。visual_type:关系/相互作用(生克合冲)用 diagram,多方对照用 table,流程步骤用 flow,金句用 quote,关键数字用 data;纯文字 text 只是兜底——知识内容必须有结构。`,
+clips 5-7 个,全片覆盖 hook→landing 完整弧线。text 加起来就是 narration,不许缺段。
+say/tts 是这条片子不像念经的唯一保证,每拍都要单独想:speed 0.82-1.25(相对基准音色的倍率),
+pitch -3~3,gap_after 0.05-0.6。相邻两拍的 speed 至少差 0.08 或 emotion 不同;全片至少一拍 ≥1.12、
+至少一拍 ≤0.95。停顿标记只写在 tts 里,text 保持干净。visual_type:关系/相互作用(生克合冲)用 diagram,多方对照用 table,流程步骤用 flow,金句用 quote,关键数字用 data;纯文字 text 只是兜底——知识内容必须有结构。`,
     },
   ],
 
@@ -117,14 +130,18 @@ clips 5-7 个,全片覆盖 hook→landing 完整弧线。text 加起来就是 na
 2. 人味:有没有 AI 腔(排比堆砌、空洞升华、"让我们一起"、每句一样长、书面语)?改成口语。
 3. 钩子:第一句 3 秒内能不能让人停下来?不行就换。
 4. 真实:数字/案例是不是具体可信?含糊的("很多人""越来越多")改成具体说法或删掉。
-5. 完整:每拍的话是不是完整的意思(不是半句)?全片是否覆盖了 hook→landing 弧线?`,
+5. 完整:每拍的话是不是完整的意思(不是半句)?全片是否覆盖了 hook→landing 弧线?
+6. 念法:逐拍看 say/tts。全片 speed 是不是挤在一起(那就是念经)?钩子有没有快起来、落点有没有压下去?
+   关键数字和反常识的转折前面有没有停顿?相邻两拍念法一样的,改掉一个。
+   第一句超过 15 字就是开头不够冲,重写短的。`,
     },
     {
       role: "user",
       content: `这是初稿(JSON):
 ${JSON.stringify(draft, null, 1)}
 
-按清单改完,返回同样结构的完整 JSON(narration + clips)。没毛病的地方别动。目标时长 ~${item.duration} 秒(4.7 字/秒)。`,
+按清单改完,返回同样结构的完整 JSON(narration + clips,每拍都要带 text/tts/say)。没毛病的地方别动。
+目标时长 ~${item.duration} 秒(4.7 字/秒,注意 speed 会影响实际时长)。`,
     },
   ],
 

@@ -9,6 +9,7 @@ const PLAYBOOKS: { name: string; title: string; stage: string; desc: string }[] 
   { name: "script", title: "脚本教案", stage: "script", desc: "叙事弧线 + 句间连贯 + 分拍" },
   { name: "critique", title: "审稿教案", stage: "script", desc: "主编二稿清单(脚本的质检员)" },
   { name: "visual", title: "画面教案", stage: "footage", desc: "卡型/信息量/主题/封面规矩" },
+  { name: "voice", title: "配音教案", stage: "voice", desc: "每拍的语速/音高/停顿——决定片子平不平" },
 ];
 
 export default async function PlaybooksPage() {

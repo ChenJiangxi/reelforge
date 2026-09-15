@@ -28,6 +28,8 @@ function workDir(item, sub = "") {
 
 // ── MiniMax TTS (international region — domestic endpoint rejects this key) ──
 // 音色表(全部在 ops-bilibili 实测过):克隆音绑定主账号,系统音任意 key 可用。
+// speech-2.8-hd 实测支持克隆音 + emotion + <#x#> 停顿标记(2026-09-15 实测)。
+const TTS_MODEL = process.env.MINIMAX_MODEL || "speech-2.8-hd";
 const VOICES = {
   "clone-zh": { voice_id: "jessy1777965074473", speed: 1.26, boost: "Chinese" },
   "presenter-male": { voice_id: "presenter_male", speed: 1.3, boost: "Chinese" },
@@ -37,17 +39,39 @@ const VOICES = {
   "minimax-en": { voice_id: "English_expressive_narrator", speed: 1.0, boost: "English" },
 };
 
-async function tts(text, profile) {
+// 每拍的念法:LLM 给的 say 是相对基准音色的倍率/偏移,这里夹到 API 合法范围。
+const EMOTIONS = new Set(["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"]);
+const clamp = (v, lo, hi, dflt) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : dflt);
+
+export function delivery(profile, say = {}) {
+  return {
+    // say.speed 是相对基准的倍率。基准音色本身已经偏快(克隆音 1.26x),
+    // 所以倍率收在 0.8-1.15、绝对值再封在 1.6 —— 更快就开始吞字了。
+    speed: Number(clamp(profile.speed * clamp(say.speed, 0.8, 1.15, 1), 0.7, 1.6, profile.speed).toFixed(2)),
+    pitch: Math.round(clamp(say.pitch, -6, 6, 0)),
+    emotion: EMOTIONS.has(say.emotion) ? say.emotion : undefined,
+    gap: clamp(say.gap_after, 0.05, 1.0, GAP),
+  };
+}
+
+async function tts(text, profile, say) {
   const base = (process.env.MINIMAX_API_BASE || "https://api.minimax.io/v1") + "/t2a_v2";
   const key = process.env.MINIMAX_API_KEY;
   if (!key) throw new Error("MINIMAX_API_KEY not in env");
+  const d = delivery(profile, say);
   const r = await fetch(base, {
     method: "POST",
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
     body: JSON.stringify({
-      model: "speech-2.5-hd-preview",
+      model: TTS_MODEL,
       text,
-      voice_setting: { voice_id: profile.voice_id, speed: profile.speed, vol: 1.0, pitch: 0 },
+      voice_setting: {
+        voice_id: profile.voice_id,
+        speed: d.speed,
+        vol: 1.0,
+        pitch: d.pitch,
+        ...(d.emotion ? { emotion: d.emotion } : {}),
+      },
       audio_setting: { sample_rate: 32000, bitrate: 128000, format: "mp3", channel: 1 },
       language_boost: profile.boost,
       subtitle_enable: false,
@@ -60,17 +84,33 @@ async function tts(text, profile) {
   return Buffer.from(j.data.audio, "hex");
 }
 
+// voiceMeta 里存的是算完的绝对值(speed 已经乘过基准);voiceClip 收的是相对倍率,
+// 所以补生成时要把它换算回去,否则会再乘一次基准。
+function sayToInput(say) {
+  if (!say) return undefined;
+  return { speed: say.speedRel, pitch: say.pitch, emotion: say.emotion ?? undefined, gap_after: say.gap_after };
+}
+
 async function voiceClip(item, clip, dir) {
   const p = join(dir, `${clip.name}.mp3`);
   const marker = join(dir, `${clip.name}.txt`);
-  // Re-generate when the line changed, even if an old mp3 with this name exists
-  // (chat edits reuse clip names; TTS is cheap, stale audio is confusing).
-  const stale = !existsSync(p) || !existsSync(marker) || readFileSync(marker, "utf8") !== clip.text;
+  const profile = VOICES[item.voice] || VOICES["clone-zh"];
+  // 念的是 tts(带 <#x#> 停顿标记),字幕用的是 text。念法变了也要重合成,
+  // 所以指纹里带上 say —— 光比文本会留下参数改了但音频没换的鬼音。
+  const spoken = clip.tts || clip.text;
+  const d = delivery(profile, clip.say);
+  const fingerprint = JSON.stringify([spoken, d.speed, d.pitch, d.emotion ?? "", TTS_MODEL]);
+  const stale = !existsSync(p) || !existsSync(marker) || readFileSync(marker, "utf8") !== fingerprint;
   if (stale) {
-    writeFileSync(p, await tts(clip.text, VOICES[item.voice] || VOICES["clone-zh"]));
-    writeFileSync(marker, clip.text);
+    writeFileSync(p, await tts(spoken, profile, clip.say));
+    writeFileSync(marker, fingerprint);
   }
-  return { path: p, dur: await ffprobeDur(p) };
+  return {
+    path: p,
+    dur: await ffprobeDur(p),
+    gap: d.gap,
+    say: { speed: d.speed, speedRel: clamp(clip.say?.speed, 0.7, 1.4, 1), pitch: d.pitch, emotion: d.emotion ?? null, gap_after: d.gap },
+  };
 }
 
 // ── stages ────────────────────────────────────────────────────────────────
@@ -105,13 +145,24 @@ async function script(item) {
   const out = await chatJSON(PROMPTS.scriptCritique(item, draft), { temperature: 0.5, maxTokens: 6000 });
   if (!Array.isArray(out.clips) || out.clips.length < 3) throw new Error("脚本 clips 太少或格式错误");
   out.clips.forEach((c, i) => { c.name = `c${String(i + 1).padStart(2, "0")}`; });
+  // 停顿标记只该出现在 tts 里:漏进 text 会被念进字幕,tts 改了字就不是她的稿子了
+  for (const c of out.clips) {
+    c.text = String(c.text ?? "").replace(/<#[\d.]+#>/g, "");
+    if (c.tts && String(c.tts).replace(/<#[\d.]+#>/g, "") !== c.text) c.tts = undefined;
+  }
   const narration = out.narration || out.clips.map((c) => c.text).join("\n");
   const chars = out.clips.reduce((n, c) => n + c.text.length, 0);
   const arc = out.clips.map((c) => c.beat).filter(Boolean).join("→");
+  const rel = out.clips.map((c) => Number(c.say?.speed) || 1);
+  const swarn = [];
+  if (Math.max(...rel) - Math.min(...rel) < 0.12) swarn.push("每拍的语速几乎一样,配音会像念经");
+  if (!out.clips.some((c) => /<#[\d.]+#>/.test(String(c.tts || "")))) swarn.push("全片没标一处停顿");
+  if ((out.clips[0]?.text || "").length > 20) swarn.push(`第一句 ${out.clips[0].text.length} 字,开头太长抓不住人`);
   return {
     script: narration,
     clips: out.clips,
-    note: `${out.clips.length} 拍(${arc || "无节拍标注"}),约 ${chars} 字(目标 ~${item.duration}s)。连贯性/人味已经过一遍主编审稿。`,
+    note: `${out.clips.length} 拍(${arc || "无节拍标注"}),约 ${chars} 字(目标 ~${item.duration}s)。连贯性/人味已经过一遍主编审稿。
+念法:${out.clips.map((c) => `${c.name} ${(Number(c.say?.speed) || 1).toFixed(2)}x${c.say?.emotion ? `/${c.say.emotion}` : ""}`).join("  ")}${swarn.length ? `\n⚠ 脚本自检:${swarn.join(";")}` : ""}`,
   };
 }
 
@@ -227,14 +278,14 @@ async function voice(item) {
   const profile = VOICES[item.voice] || VOICES["clone-zh"];
   const meta = [];
   for (const c of clips) {
-    console.log(`  [voice] ${c.name} tts…`);
-    const { path: p, dur } = await voiceClip(item, c, dir);
-    meta.push({ name: c.name, text: c.text, dur, file: p });
+    const { path: p, dur, gap, say } = await voiceClip(item, c, dir);
+    console.log(`  [voice] ${c.name} ${dur.toFixed(1)}s @${say.speed.toFixed(2)}x pitch${say.pitch >= 0 ? "+" : ""}${say.pitch} ${say.emotion ?? "auto"} gap${gap}`);
+    meta.push({ name: c.name, text: c.text, tts: c.tts || c.text, dur, gap, say, file: p });
   }
   // preview: one mp3 she can listen to straight through
   const preview = join(dir, "preview.mp3");
   const inputs = meta.flatMap((m) => ["-i", m.file]);
-  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,apad,atrim=0:${(m.dur + 0.35).toFixed(3)}[a${i}]`).join(";");
+  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,apad,atrim=0:${(m.dur + m.gap).toFixed(3)}[a${i}]`).join(";");
   const concat = meta.map((_, i) => `[a${i}]`).join("") + `concat=n=${meta.length}:v=0:a=1[a]`;
   await ffmpeg([...inputs, "-filter_complex", filters + ";" + concat, "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "4", preview]);
   const { url } = await upload(item.projectId, preview, "voice-preview.mp3");
@@ -242,18 +293,32 @@ async function voice(item) {
   const wave = join(dir, "voice-wave.png");
   await ffmpeg(["-i", preview, "-filter_complex", "showwavespic=s=1800x140:colors=#e8622c", "-frames:v", "1", wave]);
   const { url: waveUrl } = await upload(item.projectId, wave, "voice-wave.png");
-  const total = meta.reduce((n, m) => n + m.dur, 0);
+  const total = meta.reduce((n, m) => n + m.dur + m.gap, 0);
   const dev = Math.abs(total - item.duration) / item.duration;
   const warn = [];
   if (dev > 0.3) warn.push(`配音总长偏离目标 ${Math.round(dev * 100)}%(目标 ~${item.duration}s)`);
   const longClip = meta.find((m) => m.dur > 20);
   if (longClip) warn.push(`${longClip.name} 太长(${longClip.dur.toFixed(1)}s),可能念不过来`);
+  // 念经自检:整片语速挤在一起 / 没人停顿 = 平。这是这条片子最常见的死法。
+  const speeds = meta.map((m) => m.say.speed);
+  const spread = Math.max(...speeds) - Math.min(...speeds);
+  if (spread < 0.12) warn.push(`整片语速几乎没变化(最快 ${Math.max(...speeds).toFixed(2)}x / 最慢 ${Math.min(...speeds).toFixed(2)}x),听起来会像念经`);
+  const paused = meta.filter((m) => /<#[\d.]+#>/.test(m.tts)).length;
+  if (paused === 0) warn.push("全片没有一处句中停顿,钩子和数字砸不下去");
+  const flat = meta.filter((m, i) => i > 0 && Math.abs(m.say.speed - meta[i - 1].say.speed) < 0.03 && m.say.emotion === meta[i - 1].say.emotion);
+  if (flat.length >= 2) warn.push(`${flat.map((m) => m.name).join("/")} 和上一拍念法完全一样`);
   const warnLine = warn.length ? `\n⚠ 配音自检:${warn.join(";")}` : "";
+  const sayLine = meta
+    .map((m) => `${m.name} ${m.dur.toFixed(1)}s @${m.say.speed.toFixed(2)}x${m.say.pitch ? ` pitch${m.say.pitch > 0 ? "+" : ""}${m.say.pitch}` : ""}${m.say.emotion ? ` ${m.say.emotion}` : ""}${/<#[\d.]+#>/.test(m.tts) ? " ⏸" : ""}`)
+    .join("\n");
   return {
     audio: url,
     wave: waveUrl,
-    voiceMeta: { clips: meta.map(({ name, text, dur }) => ({ name, text, dur })), gap: GAP },
-    note: `音色 ${profile.voice_id} @${profile.speed}x,共 ${total.toFixed(1)}s(${meta.length} 句)。配音够不够激情、地不地道,请审听。${warnLine}`,
+    voiceMeta: { clips: meta.map(({ name, text, tts, dur, gap, say }) => ({ name, text, tts, dur, gap, say })), gap: GAP },
+    note: `音色 ${profile.voice_id} 基准 ${profile.speed}x(${TTS_MODEL}),共 ${total.toFixed(1)}s(${meta.length} 句)。
+每拍的念法(语速是基准的倍数,⏸ = 句中有停顿):
+${sayLine}
+节奏够不够、哪拍该快该慢,请审听——打回时直接点名"第3拍太平/开头再快点",下一版照着改。${warnLine}`,
   };
 }
 
@@ -291,7 +356,9 @@ async function ensureInputs(item) {
   const voices = [];
   for (const m of meta || []) {
     const p = join(voiceDir, `${m.name}.mp3`);
-    if (!existsSync(p)) await voiceClip(item, m, voiceDir);
+    // m 来自 voiceMeta,带着当时的 tts 文本和念法 —— 重新生成必须用同一套,
+    // 不然补出来的那一拍念法和其他拍对不上。
+    if (!existsSync(p)) await voiceClip(item, { ...m, say: sayToInput(m.say) }, voiceDir);
     voices.push(p);
   }
   return { visuals, voices, meta };
@@ -307,7 +374,7 @@ async function edit(item) {
   // 1) per-clip video segments: card/image gets a subtle zoom; 录屏裁切铺满
   const segs = [];
   for (let i = 0; i < visuals.length; i++) {
-    const segDur = meta[i].dur + GAP;
+    const segDur = meta[i].dur + (meta[i].gap ?? GAP);
     const frames = Math.ceil(segDur * fps);
     const seg = join(dir, `seg-${meta[i].name}.mp4`);
     if (visuals[i].kind === "video" || visuals[i].kind === "anim") {
@@ -328,7 +395,7 @@ async function edit(item) {
 
   // 3) voice track: each clip padded to its segment length, then concat
   const inputs = voices.flatMap((v) => ["-i", v]);
-  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,volume=5dB,apad,atrim=0:${(m.dur + GAP).toFixed(3)}[a${i}]`).join(";");
+  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,volume=5dB,apad,atrim=0:${(m.dur + (m.gap ?? GAP)).toFixed(3)}[a${i}]`).join(";");
   const concatF = meta.map((_, i) => `[a${i}]`).join("") + `concat=n=${meta.length}:v=0:a=1[av]`;
   const voiceM4a = join(dir, "voice.m4a");
   await ffmpeg([...inputs, "-filter_complex", filters + ";" + concatF, "-map", "[av]", voiceM4a]);
@@ -337,7 +404,7 @@ async function edit(item) {
   const out = join(dir, "edit.mp4");
   const bgmFile = item.bgm === "yes" ? readdirSafe(join(process.cwd(), "worker", "bgm")).find((f) => f.endsWith(".mp3")) : null;
   if (bgmFile) {
-    const total = meta.reduce((n, m) => n + m.dur + GAP, 0);
+    const total = meta.reduce((n, m) => n + m.dur + (m.gap ?? GAP), 0);
     await ffmpeg([
       "-i", videoOnly, "-i", voiceM4a, "-stream_loop", "-1", "-i", join(process.cwd(), "worker", "bgm", bgmFile),
       "-filter_complex", `[2:a]aresample=44100,volume=-18dB,atrim=0:${total.toFixed(3)}[bg];[1:a][bg]amix=inputs=2:duration=first:normalize=0[a]`,
@@ -350,7 +417,7 @@ async function edit(item) {
   console.log("  [edit] uploading edit.mp4…");
   const { url } = await upload(item.projectId, out, "edit.mp4");
   const total = await ffprobeDur(out);
-  const expected = meta.reduce((n, m) => n + m.dur + GAP, 0);
+  const expected = meta.reduce((n, m) => n + m.dur + (m.gap ?? GAP), 0);
   const info = await ffprobeInfo(out);
   const vs = (info.streams || []).find((x) => x.codec_type === "video") || {};
   const warn = [];
@@ -408,7 +475,7 @@ async function subtitles(item) {
       overlays.push({ png, text: l, start: t, end: t + seg });
       t += seg;
     }
-    offset += m.dur + gap;
+    offset += m.dur + (m.gap ?? gap);
   }
   await closeBrowser();
 
