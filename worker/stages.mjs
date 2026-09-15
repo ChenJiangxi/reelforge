@@ -534,6 +534,29 @@ function pickCamera(beat, index, prev) {
   return candidates.find((c) => c !== prev) || candidates[0];
 }
 
+// ── 转场:硬切是"幻灯片感"的主要来源 ──────────────────────────────
+// 但也不能每刀都花哨 —— 一条 6-12 拍的片子只配 1-2 个重转场,其余用短交叉淡化,
+// 否则转场本身变成噪音。重转场留给叙事真正拐弯的地方(turn / landing)。
+const SOFT_CUT = { type: "fade", dur: 0.22 };
+const STRONG_CUTS = { turn: { type: "smoothleft", dur: 0.38 }, landing: { type: "smoothup", dur: 0.34 } };
+const MAX_STRONG_CUTS = 2;
+
+function planTransitions(meta) {
+  const out = [];
+  let strong = 0;
+  for (let i = 1; i < meta.length; i++) {
+    const beat = meta[i].beat;
+    const want = STRONG_CUTS[beat];
+    if (want && strong < MAX_STRONG_CUTS) {
+      out.push({ ...want, into: meta[i].name });
+      strong += 1;
+    } else {
+      out.push({ ...SOFT_CUT, into: meta[i].name });
+    }
+  }
+  return out;
+}
+
 async function edit(item) {
   const { visuals, voices, meta } = await ensureInputs(item);
   if (!visuals.length || visuals.length !== voices.length) throw new Error("画面和配音数量对不上");
@@ -545,8 +568,12 @@ async function edit(item) {
   const segs = [];
   let lastMove = null;
   const cameraLog = [];
+  // 第 i 段要多渲一个转场的时长,给下一刀当重叠料;xfade 吃掉的正好是多出来的部分,
+  // 所以成片总长仍然等于 Σ(每拍时长 + 句尾留白),音轨不用动。
+  const trans = planTransitions(meta);
   for (let i = 0; i < visuals.length; i++) {
-    const segDur = meta[i].dur + (meta[i].gap ?? GAP);
+    const beatDur = meta[i].dur + (meta[i].gap ?? GAP);
+    const segDur = beatDur + (trans[i] ? trans[i].dur : 0);
     const frames = Math.ceil(segDur * fps);
     const seg = join(dir, `seg-${meta[i].name}.mp4`);
     if (visuals[i].kind === "video" || visuals[i].kind === "anim") {
@@ -563,11 +590,24 @@ async function edit(item) {
     segs.push(seg);
   }
 
-  // 2) concat video
-  const listFile = join(dir, "concat.txt");
-  writeFileSync(listFile, segs.map((s) => `file '${s}'`).join("\n"));
+  // 2) 串起来:一刀一个 xfade(offset 用"到这拍为止的累计时长",不含重叠)
   const videoOnly = join(dir, "video-only.mp4");
-  await ffmpeg(["-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", videoOnly]);
+  if (segs.length === 1) {
+    await ffmpeg(["-i", segs[0], "-c", "copy", videoOnly]);
+  } else {
+    const inputs = segs.flatMap((s) => ["-i", s]);
+    let offset = 0;
+    const chain = trans.map((t, i) => {
+      offset += meta[i].dur + (meta[i].gap ?? GAP);
+      const src = i === 0 ? "[0:v]" : `[x${i}]`;
+      const dst = i === trans.length - 1 ? "[vout]" : `[x${i + 1}]`;
+      // offset = 转场开始的时刻,也就是"到这拍为止的累计时长"。
+      // 每段多渲了一个转场的料,所以这一刻正好是上一段多出来那截的开头。
+      return `${src}[${i + 1}:v]xfade=transition=${t.type}:duration=${t.dur}:offset=${offset.toFixed(3)}${dst}`;
+    }).join(";");
+    await ffmpeg([...inputs, "-filter_complex", chain, "-map", "[vout]", "-c:v", "libx264", "-crf", "19", "-preset", "fast", "-pix_fmt", "yuv420p", videoOnly]);
+  }
+  console.log(`  [edit] 转场:${trans.map((t) => `${t.into} ${t.type}`).join("  ")}`);
 
   // 3) voice track: each clip padded to its segment length, then concat
   const inputs = voices.flatMap((v) => ["-i", v]);
@@ -602,7 +642,7 @@ async function edit(item) {
   const warnLine = warn.length ? `\n⚠ 剪辑自检:${warn.join(";")}` : "";
   return {
     video: url,
-    note: `粗剪 ${total.toFixed(1)}s,${visuals.length} 拍${bgmFile ? "(带 BGM 垫底)" : "(无 BGM)"}。${cameraLog.length ? `运镜:${cameraLog.join("  ")}` : ""}
+    note: `粗剪 ${total.toFixed(1)}s,${visuals.length} 拍${bgmFile ? "(带 BGM 垫底)" : "(无 BGM)"}。${cameraLog.length ? `运镜:${cameraLog.join("  ")}` : ""}${trans.length ? `\n转场:${trans.map((t) => `${t.into} ${t.type}`).join("  ")}` : ""}
 节奏/画面对位请审。${warnLine}`,
   };
 }
