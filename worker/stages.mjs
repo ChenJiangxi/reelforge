@@ -365,22 +365,29 @@ async function footage(item) {
 // 念法从哪来:脚本阶段标好的最好。老项目没标,或者她打回说"太平/开头再快点",
 // 就在这儿补一遍 —— 只动念法,台词一个字不改(改完对不上就丢掉那拍的 tts)。
 async function withDelivery(item, clips) {
-  const missing = clips.every((c) => !c.say);
+  // 2026-09-15 生产事故:这里原来写的是 clips.every(...),意思是"全部拍都没念法才补"。
+  // 聊天里插入一句新台词(chat-ops.ts 的 insert_after)不会带 say,如果其它拍都有 say,
+  // every() 判定为"不缺",这一拍就带着 say=undefined 流进 smoothPitch/capPitchRange,
+  // 两边都直接读 c.say.pitch,当场崩掉整个配音阶段。改成 some():只要有一拍缺,就补。
+  const missing = clips.some((c) => !c.say);
   if (!missing && !item.reviewNote) return clips;
-  console.log(`  [voice] ${missing ? "脚本里没有念法" : "按打回批注重标念法"},让 LLM 标一遍(不改台词)`);
+  console.log(`  [voice] ${missing ? "有拍没标念法" : "按打回批注重标念法"},让 LLM 标一遍(不改台词)`);
   let out;
   try {
     out = await chatJSON(guided(item, PROMPTS.delivery(item, clips)), { temperature: 0.5, maxTokens: 3000 });
   } catch (e) {
-    console.log(`  [voice] 标念法失败(${e.message?.slice(0, 80)}),这一版按原样念`);
-    return clips;
+    console.log(`  [voice] 标念法失败(${e.message?.slice(0, 80)}),缺的那几拍给默认念法兜底`);
+    out = null;
   }
   const byName = new Map((out?.clips || []).map((c) => [c.name, c]));
   return clips.map((c) => {
     const d = byName.get(c.name);
-    if (!d) return c;
+    // 兜底:LLM 没标这拍(没返回/漏了名字/整个调用失败)、且这拍本来就没 say,
+    // 给一个空对象而不是留 undefined —— 下游全靠 say.xxx 这样直接取值,
+    // undefined 会让整个配音阶段崩掉,空对象走 delivery() 的默认值就没事。
+    if (!d) return c.say ? c : { ...c, say: {} };
     const tts = typeof d.tts === "string" && d.tts.replace(/<#[\d.]+#>/g, "") === c.text ? d.tts : undefined;
-    return { ...c, tts: tts ?? c.tts, say: d.say || c.say };
+    return { ...c, tts: tts ?? c.tts, say: d.say || c.say || {} };
   });
 }
 
@@ -459,7 +466,8 @@ function smoothPitch(clips) {
 // 基频能差好几十 Hz),压参数的跨度是唯一测得动、也控得住的手段。
 const MAX_PITCH_RANGE = 4; // 开头到结尾最多留这么大的设计跨度
 function capPitchRange(clips) {
-  const pitches = clips.map((c) => Math.round(Number(c.say.pitch) || 0));
+  // 第二道防线:就算 withDelivery 又漏了一拍,这里也不该让整个配音阶段崩掉。
+  const pitches = clips.map((c) => Math.round(Number(c.say?.pitch) || 0));
   const lo = Math.min(...pitches), hi = Math.max(...pitches);
   const range = hi - lo;
   if (range <= MAX_PITCH_RANGE) return clips;
@@ -467,7 +475,7 @@ function capPitchRange(clips) {
   const scale = MAX_PITCH_RANGE / range;
   const out = clips.map((c, i) => {
     const shrunk = Math.round(mean + (pitches[i] - mean) * scale);
-    return shrunk === pitches[i] ? c : { ...c, say: { ...c.say, pitch: shrunk } };
+    return shrunk === pitches[i] ? c : { ...c, say: { ...(c.say || {}), pitch: shrunk } };
   });
   console.log(`  [voice] 全片音高跨度 ${range}→${MAX_PITCH_RANGE}:${pitches.join(" ")} → ${out.map((c) => c.say.pitch).join(" ")}`);
   return out;
