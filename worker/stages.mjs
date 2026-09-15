@@ -47,7 +47,8 @@ export function delivery(profile, say = {}) {
   return {
     // say.speed 是相对基准的倍率。基准音色本身已经偏快(克隆音 1.26x),
     // 所以倍率收在 0.8-1.15、绝对值再封在 1.6 —— 更快就开始吞字了。
-    speed: Number(clamp(profile.speed * clamp(say.speed, 0.8, 1.15, 1), 0.7, 1.6, profile.speed).toFixed(2)),
+    // LLM 偶尔把倍率写成负数(实见 speed: -1.02),取绝对值再夹,不然这拍会莫名变慢
+    speed: Number(clamp(profile.speed * clamp(Math.abs(Number(say.speed)), 0.8, 1.15, 1), 0.7, 1.6, profile.speed).toFixed(2)),
     pitch: Math.round(clamp(say.pitch, -6, 6, 0)),
     emotion: EMOTIONS.has(say.emotion) ? say.emotion : undefined,
     gap: clamp(say.gap_after, 0.05, 1.0, GAP),
@@ -109,7 +110,7 @@ async function voiceClip(item, clip, dir) {
     path: p,
     dur: await ffprobeDur(p),
     gap: d.gap,
-    say: { speed: d.speed, speedRel: clamp(clip.say?.speed, 0.7, 1.4, 1), pitch: d.pitch, emotion: d.emotion ?? null, gap_after: d.gap },
+    say: { speed: d.speed, speedRel: clamp(Math.abs(Number(clip.say?.speed)), 0.8, 1.15, 1), pitch: d.pitch, emotion: d.emotion ?? null, gap_after: d.gap },
   };
 }
 
@@ -271,13 +272,36 @@ async function footage(item) {
   };
 }
 
+// 念法从哪来:脚本阶段标好的最好。老项目没标,或者她打回说"太平/开头再快点",
+// 就在这儿补一遍 —— 只动念法,台词一个字不改(改完对不上就丢掉那拍的 tts)。
+async function withDelivery(item, clips) {
+  const missing = clips.every((c) => !c.say);
+  if (!missing && !item.reviewNote) return clips;
+  console.log(`  [voice] ${missing ? "脚本里没有念法" : "按打回批注重标念法"},让 LLM 标一遍(不改台词)`);
+  let out;
+  try {
+    out = await chatJSON(guided(item, PROMPTS.delivery(item, clips)), { temperature: 0.5, maxTokens: 3000 });
+  } catch (e) {
+    console.log(`  [voice] 标念法失败(${e.message?.slice(0, 80)}),这一版按原样念`);
+    return clips;
+  }
+  const byName = new Map((out?.clips || []).map((c) => [c.name, c]));
+  return clips.map((c) => {
+    const d = byName.get(c.name);
+    if (!d) return c;
+    const tts = typeof d.tts === "string" && d.tts.replace(/<#[\d.]+#>/g, "") === c.text ? d.tts : undefined;
+    return { ...c, tts: tts ?? c.tts, say: d.say || c.say };
+  });
+}
+
 async function voice(item) {
   const clips = item.upstream?.script?.clips;
   if (!clips?.length) throw new Error("上游脚本没有 clips");
   const dir = workDir(item, "voice");
   const profile = VOICES[item.voice] || VOICES["clone-zh"];
+  const staged = await withDelivery(item, clips);
   const meta = [];
-  for (const c of clips) {
+  for (const c of staged) {
     const { path: p, dur, gap, say } = await voiceClip(item, c, dir);
     console.log(`  [voice] ${c.name} ${dur.toFixed(1)}s @${say.speed.toFixed(2)}x pitch${say.pitch >= 0 ? "+" : ""}${say.pitch} ${say.emotion ?? "auto"} gap${gap}`);
     meta.push({ name: c.name, text: c.text, tts: c.tts || c.text, dur, gap, say, file: p });

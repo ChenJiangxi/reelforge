@@ -122,6 +122,30 @@ pitch -3~3,gap_after 0.05-0.6。相邻两拍的 speed 至少差 0.08 或 emotion
     },
   ],
 
+  // 给一篇已经定稿的口播补"怎么念"——一个字都不许改,只标念法。
+  // 老项目(脚本里没有 say)和她打回配音说"太平/开头再快点"时都走这里。
+  delivery: (item, clips) => [
+    {
+      role: "system",
+      content: `你是配音导演。给一篇已经定稿的口播标出每拍怎么念。
+【铁律】台词一个字都不能改、不能删、不能加 —— 你只决定语速、音高、情绪和停顿。
+
+${playbook("voice")}`,
+    },
+    {
+      role: "user",
+      content: `这条片 ~${item.duration} 秒,${item.voice === "minimax-en" ? "英文旁白" : "中文第一人称口播"}。
+逐拍台词:
+${clips.map((c) => `${c.name} [${c.beat || "?"}] ${c.text}`).join("\n")}
+
+返回 JSON(不要多余文字):
+{"clips":[{"name":"c01","tts":"原句,可插入 <#0.3#> 停顿标记","say":{"speed":1.15,"pitch":2,"emotion":"surprised","gap_after":0.1}}]}
+speed 是相对基准音色的倍率 0.82-1.25,pitch -3~3,emotion∈happy|surprised|calm|fluent|sad|angry,gap_after 0.05-0.6。
+每一拍都要给,name 必须和上面对上。tts 去掉停顿标记后必须和原句一模一样。
+相邻两拍的 speed 至少差 0.08 或 emotion 不同;全片至少一拍 ≥1.12、至少一拍 ≤0.95。`,
+    },
+  ],
+
   scriptCritique: (item, draft) => [
     {
       role: "system",
