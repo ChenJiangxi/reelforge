@@ -18,21 +18,31 @@
 
 ## 按节拍给的默认值（不是照抄，是起点）
 
+MiniMax 的 emotion 只有九个词：happy / sad / angry / fearful / disgusted / surprised /
+calm / fluent / whisper。**`fluent` 不是"中性讲解"，是"没表情"** —— 选它等于放弃这一拍
+的情绪。下面的表里刻意不给 context/evidence 配 fluent，因为这两种节拍占一条片的大头，
+一旦它们是 fluent，整条片听起来就是温柔念白，不管 hook 多冲都救不回来。
+
 - **hook 钩子**：speed 1.12–1.25，pitch +1 ~ +3，emotion surprised 或 happy，
   第一句里插一个 0.15–0.25 秒的停顿（先抛再砸），gap_after 0.08–0.15。
-- **context 铺垫**：speed 0.98–1.05，pitch 0，emotion fluent，少用停顿，gap_after 0.18–0.25。
-- **evidence 论据**：speed 0.92–1.0，pitch 0 ~ -1，emotion fluent，
-  关键数字前停 0.2–0.3，gap_after 0.2–0.3。
+- **context 铺垫**：speed 0.98–1.08，pitch 0 ~ +1，emotion **happy**（讲人话、有兴致地
+  在跟人聊，不是照本宣科），少用停顿，gap_after 0.18–0.25。
+- **evidence 论据**：speed 0.92–1.05，pitch 0 ~ +1，emotion **happy 或 surprised**
+  （"你猜怎么着"的语气讲干货，不是念报告），关键数字前停 0.2–0.3，gap_after 0.2–0.3。
 - **turn 转折**：speed 0.85–0.95，pitch -1 ~ -2，emotion calm，
   停顿写在**上一拍的 gap_after**（给到 0.35），这拍自己开头不要加标记。
+  这是全片唯一该用"沉下来"的地方——用在这儿才是对比,用在前面就是没精神。
 - **landing 落点**：speed 0.85–0.95，pitch -2 ~ -3，emotion calm，
   最后一句前可以在句中停 0.3（写在 tts 里），gap_after 0.3。
 
-## 三条硬性要求（自检会拦）
+## 四条硬性要求（自检会拦）
 
 1. **相邻两拍不许念法一样**：speed 至少差 0.08，或者 emotion 不同。
 2. **全片要有极值**：至少一拍 speed ≥ 1.12，至少一拍 ≤ 0.95。整片挤在 1.0 附近就是念经。
 3. **开头三秒最重要**：第一句 15 字以内，短、冲、能停住手指。长句、铺垫、自我介绍一律不行。
+4. **`fluent`/`calm` 不能超过全片一半**：这两个是"收着念"的档,用多了就是温柔念白。
+   有情绪色彩的档(happy/surprised/sad/angry 等)至少要占一半以上——包括 context 和
+   evidence 这些"讲解"节拍,讲解不等于没表情。
 
 ## 几个能救命的小手法
 
@@ -40,7 +50,9 @@
 - **数字前停一下**，数字才砸得下去：「这套东西我跑了<#0.25#>五年。」
 - **连着三个短句加速**，用来把情绪推上去，然后猛地慢下来说结论。
 - **越重要的话越慢越低**，不是越大声。落点那句压着说，比喊有力。
-- 别整片用同一种 emotion。`fluent` 是默认档，不是唯一档。
+- **"讲解"不是"没情绪"**：说一个知识点时,你是带着"这个很有意思"的兴致在说,
+  不是照着稿子念——这种兴致对应的是 happy/surprised,不是 fluent。
+- 全片留一两拍真正"沉下来"(calm,turn/landing),对比才成立。别整片都沉,也别整片都亮。
 
 ## 一条片子要听起来像"一次录下来的"
 

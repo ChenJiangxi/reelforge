@@ -387,7 +387,10 @@ async function withDelivery(item, clips) {
 // B 版 = 同一份稿子"再冲一点"的念法:整体快一档、亮一档、留白短一档。
 // 不是随机换参数 —— 是给她一个明确的方向选择(稳 vs 冲),选完了才知道这条片该往哪走。
 function punchier(say = {}) {
-  const emotion = say.emotion === "calm" ? "fluent" : say.emotion === "fluent" ? "happy" : say.emotion;
+  // calm 是特意留给转折/落点"沉下来"制造对比的,B 版整体更冲不该把它拉回 fluent
+  // (那是彻底没表情,比 calm 更平)—— 直接推到 surprised,反差更足。
+  // fluent 本来就是"没表情"的兜底档,B 版没理由继续沉默,直接推成 happy。
+  const emotion = say.emotion === "calm" ? "surprised" : say.emotion === "fluent" ? "happy" : say.emotion;
   return {
     ...say,
     speed: Math.min(1.15, (Number(say.speed) || 1) * 1.08),
@@ -451,6 +454,12 @@ async function voice(item) {
   if (paused === 0) warn.push("全片没有一处句中停顿,钩子和数字砸不下去");
   const flat = meta.filter((m, i) => i > 0 && Math.abs(m.say.speed - meta[i - 1].say.speed) < 0.03 && m.say.emotion === meta[i - 1].say.emotion);
   if (flat.length >= 2) warn.push(`${flat.map((m) => m.name).join("/")} 和上一拍念法完全一样`);
+  // fluent/calm 是"收着念"的档,超过一半就是温柔念白 —— 这是她 2026-09-15 实际听出来的问题:
+  // 12 拍里 8 拍是 fluent/calm,只有开头一拍外放,整条片自然显得没情绪。
+  const subdued = meta.filter((m) => m.say.emotion === "fluent" || m.say.emotion === "calm" || !m.say.emotion).length;
+  if (meta.length >= 4 && subdued / meta.length > 0.5) {
+    warn.push(`${subdued}/${meta.length} 拍是 fluent/calm(收着念),情绪太内敛,多数节拍该用 happy/surprised`);
+  }
   const warnLine = warn.length ? `\n⚠ 配音自检:${warn.join(";")}` : "";
 
   const pick = ({ name, beat, text, tts, dur, gap, say, words, head }) => ({ name, beat, text, tts, dur, gap, say, words, head });
