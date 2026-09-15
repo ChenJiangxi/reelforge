@@ -20,6 +20,23 @@ function guided(item, messages) {
   return out;
 }
 
+// LLM 常把表演提示写进台词:"(停顿)""(轻笑)""（深呼吸）" —— TTS 会照着念出来。
+// 名单学自 MuseDock server/services/tts/speechText.js。
+const STAGE_DIRECTIONS = [
+  "吸气", "深呼吸", "停顿", "稍停顿", "短暂停顿", "稍作停顿", "沉默片刻",
+  "轻笑", "苦笑", "冷笑", "叹气", "长叹一口气", "语速加快", "语速放慢", "加重语气", "放轻声音",
+];
+const CJK_DIRECTION_RE = new RegExp(`[（(]\\s*(?:${STAGE_DIRECTIONS.join("|")})\\s*[)）]`, "g");
+const ASCII_DIRECTION_RE = /\[\s*(?:pause|breath|inhale|laugh|sigh)\s*\]/gi;
+
+export function stripStageDirections(value) {
+  return String(value ?? "")
+    .replace(CJK_DIRECTION_RE, "")
+    .replace(ASCII_DIRECTION_RE, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 function workDir(item, sub = "") {
   const d = join(WORK_ROOT, item.projectId, sub);
   mkdirSync(d, { recursive: true });
@@ -75,14 +92,36 @@ async function tts(text, profile, say) {
       },
       audio_setting: { sample_rate: 32000, bitrate: 128000, format: "mp3", channel: 1 },
       language_boost: profile.boost,
-      subtitle_enable: false,
+      // 字级时间戳:MiniMax 自己知道每个字什么时候念的,比我们按字数估准得多
+      // —— 尤其现在台词里有 <#x#> 停顿,估算会整行歪掉。
+      subtitle_enable: true,
+      subtitle_type: "word",
     }),
   });
   const j = await r.json().catch(() => ({}));
   if (j?.base_resp?.status_code !== 0) {
     throw new Error(`minimax: ${JSON.stringify(j?.base_resp || j).slice(0, 200)}`);
   }
-  return Buffer.from(j.data.audio, "hex");
+  return { audio: Buffer.from(j.data.audio, "hex"), words: await fetchWordTimings(j?.data?.subtitle_file) };
+}
+
+// 字幕文件是一个临时 OSS 链接,拿不到就算了 —— 字幕会退回按字数估算,不至于整拍失败。
+async function fetchWordTimings(url) {
+  if (!url || !/^https:/.test(url)) return null;
+  try {
+    const r = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(30000) });
+    if (!r.ok) throw new Error(String(r.status));
+    const j = await r.json();
+    const segs = Array.isArray(j) ? j : [j];
+    const words = segs
+      .flatMap((sg) => sg?.timestamped_words || [])
+      .map((w) => [String(w.word ?? ""), Math.round(Number(w.time_begin) || 0), Math.round(Number(w.time_end) || 0)])
+      .filter((w) => w[0]);
+    return words.length ? words : null;
+  } catch (e) {
+    console.log(`  [voice] 字级时间戳没拿到(${String(e.message).slice(0, 60)}),这拍字幕按字数估算`);
+    return null;
+  }
 }
 
 // voiceMeta 里存的是算完的绝对值(speed 已经乘过基准);voiceClip 收的是相对倍率,
@@ -98,17 +137,31 @@ async function voiceClip(item, clip, dir) {
   const profile = VOICES[item.voice] || VOICES["clone-zh"];
   // 念的是 tts(带 <#x#> 停顿标记),字幕用的是 text。念法变了也要重合成,
   // 所以指纹里带上 say —— 光比文本会留下参数改了但音频没换的鬼音。
-  const spoken = clip.tts || clip.text;
+  const spoken = stripStageDirections(clip.tts || clip.text);
   const d = delivery(profile, clip.say);
   const fingerprint = JSON.stringify([spoken, d.speed, d.pitch, d.emotion ?? "", TTS_MODEL]);
+  const wordsFile = join(dir, `${clip.name}.words.json`);
   const stale = !existsSync(p) || !existsSync(marker) || readFileSync(marker, "utf8") !== fingerprint;
   if (stale) {
-    writeFileSync(p, await tts(spoken, profile, clip.say));
+    const { audio, words } = await tts(spoken, profile, clip.say);
+    writeFileSync(p, audio);
+    if (words) writeFileSync(wordsFile, JSON.stringify(words));
     writeFileSync(marker, fingerprint);
   }
+  let words = null;
+  try { words = JSON.parse(readFileSync(wordsFile, "utf8")); } catch { words = null; }
+
+  // TTS 经常在句尾多留一大段静音,拼起来每拍之间就莫名拖长 —— 节奏就是这么没的。
+  // 字级时间戳里最后一个字的结束时间就是人声结束点,按它收边(留 0.25s 余韵)。
+  const raw = await ffprobeDur(p);
+  const lastEnd = words?.length ? words[words.length - 1][2] / 1000 : null;
+  const tail = lastEnd != null ? raw - lastEnd : 0;
+  const dur = lastEnd != null && tail > 0.35 ? Number((lastEnd + 0.25).toFixed(3)) : raw;
+  if (dur !== raw) console.log(`  [voice] ${clip.name} 尾部静音 ${tail.toFixed(2)}s,按人声收到 ${dur.toFixed(2)}s`);
   return {
     path: p,
-    dur: await ffprobeDur(p),
+    dur,
+    words,
     gap: d.gap,
     say: { speed: d.speed, speedRel: clamp(Math.abs(Number(clip.say?.speed)), 0.8, 1.15, 1), pitch: d.pitch, emotion: d.emotion ?? null, gap_after: d.gap },
   };
@@ -146,10 +199,14 @@ async function script(item) {
   const out = await chatJSON(PROMPTS.scriptCritique(item, draft), { temperature: 0.5, maxTokens: 6000 });
   if (!Array.isArray(out.clips) || out.clips.length < 3) throw new Error("脚本 clips 太少或格式错误");
   out.clips.forEach((c, i) => { c.name = `c${String(i + 1).padStart(2, "0")}`; });
-  // 停顿标记只该出现在 tts 里:漏进 text 会被念进字幕,tts 改了字就不是她的稿子了
+  // 停顿标记只该出现在 tts 里:漏进 text 会被念进字幕,tts 改了字就不是她的稿子了。
+  // 舞台提示同理 —— LLM 爱写"(停顿)""(轻笑)"进台词,TTS 会把这三个字念出来。
   for (const c of out.clips) {
-    c.text = String(c.text ?? "").replace(/<#[\d.]+#>/g, "");
-    if (c.tts && String(c.tts).replace(/<#[\d.]+#>/g, "") !== c.text) c.tts = undefined;
+    c.text = stripStageDirections(String(c.text ?? "").replace(/<#[\d.]+#>/g, ""));
+    if (c.tts) {
+      c.tts = stripStageDirections(String(c.tts));
+      if (c.tts.replace(/<#[\d.]+#>/g, "") !== c.text) c.tts = undefined;
+    }
   }
   const narration = out.narration || out.clips.map((c) => c.text).join("\n");
   const chars = out.clips.reduce((n, c) => n + c.text.length, 0);
@@ -302,9 +359,9 @@ async function voice(item) {
   const staged = await withDelivery(item, clips);
   const meta = [];
   for (const c of staged) {
-    const { path: p, dur, gap, say } = await voiceClip(item, c, dir);
+    const { path: p, dur, gap, say, words } = await voiceClip(item, c, dir);
     console.log(`  [voice] ${c.name} ${dur.toFixed(1)}s @${say.speed.toFixed(2)}x pitch${say.pitch >= 0 ? "+" : ""}${say.pitch} ${say.emotion ?? "auto"} gap${gap}`);
-    meta.push({ name: c.name, text: c.text, tts: c.tts || c.text, dur, gap, say, file: p });
+    meta.push({ name: c.name, text: c.text, tts: c.tts || c.text, dur, gap, say, words, file: p });
   }
   // preview: one mp3 she can listen to straight through
   const preview = join(dir, "preview.mp3");
@@ -338,7 +395,7 @@ async function voice(item) {
   return {
     audio: url,
     wave: waveUrl,
-    voiceMeta: { clips: meta.map(({ name, text, tts, dur, gap, say }) => ({ name, text, tts, dur, gap, say })), gap: GAP },
+    voiceMeta: { clips: meta.map(({ name, text, tts, dur, gap, say, words }) => ({ name, text, tts, dur, gap, say, words })), gap: GAP },
     note: `音色 ${profile.voice_id} 基准 ${profile.speed}x(${TTS_MODEL}),共 ${total.toFixed(1)}s(${meta.length} 句)。
 每拍的念法(语速是基准的倍数,⏸ = 句中有停顿):
 ${sayLine}
@@ -473,6 +530,39 @@ function splitLines(text) {
   return lines.length ? lines : [text];
 }
 
+// 有字级时间戳时,行就按真实发声时间断:一行的起止取首尾字的时间,
+// 停顿天然落在两行之间 —— 按字数估算做不到这点。
+function linesFromWords(words, maxChars = 14) {
+  const BREAK = /[，。！？、；：,.!?;:]/;
+  const lines = [];
+  let cur = null;
+  for (const [w, b, e] of words) {
+    const isPunct = BREAK.test(w);
+    if (!isPunct) {
+      if (!cur) cur = { text: "", start: b / 1000, end: e / 1000 };
+      cur.text += w;
+      cur.end = e / 1000;
+    } else if (cur) {
+      cur.end = Math.max(cur.end, b / 1000);
+    }
+    if (cur && (isPunct || [...cur.text].length >= maxChars)) {
+      lines.push(cur);
+      cur = null;
+    }
+  }
+  if (cur) lines.push(cur);
+  // 断出来的碎片(1-3 字)并进上一行,别让字幕一闪一个字
+  const merged = [];
+  for (const l of lines) {
+    const prev = merged[merged.length - 1];
+    if (prev && ([...l.text].length <= 3 || [...prev.text].length <= 3) && [...(prev.text + l.text)].length <= maxChars + 4) {
+      prev.text += l.text;
+      prev.end = l.end;
+    } else merged.push(l);
+  }
+  return merged.filter((l) => l.text && l.end > l.start);
+}
+
 async function subtitles(item) {
   const meta = item.upstream?.voice?.voiceMeta?.clips;
   const editVideo = item.upstream?.edit?.video;
@@ -488,16 +578,28 @@ async function subtitles(item) {
   const gap = item.upstream.voice.voiceMeta.gap ?? GAP;
   let offset = 0;
   const overlays = []; // { png, start, end }
+  let byWords = 0;
   for (const m of meta) {
-    const lines = splitLines(m.text);
-    const tot = lines.reduce((n, l) => n + l.length, 0) || 1;
-    let t = offset;
-    for (const l of lines) {
-      const seg = (m.dur * l.length) / tot;
-      const png = join(dir, `line-${String(overlays.length).padStart(3, "0")}.png`);
-      await renderSubLine(l, size, png);
-      overlays.push({ png, text: l, start: t, end: t + seg });
-      t += seg;
+    // 首选 MiniMax 给的字级时间戳;老项目没有就退回按字数估算
+    const timed = Array.isArray(m.words) && m.words.length ? linesFromWords(m.words) : null;
+    if (timed?.length) {
+      byWords += 1;
+      for (const l of timed) {
+        const png = join(dir, `line-${String(overlays.length).padStart(3, "0")}.png`);
+        await renderSubLine(l.text, size, png);
+        overlays.push({ png, text: l.text, start: offset + l.start, end: offset + Math.min(l.end, m.dur) });
+      }
+    } else {
+      const lines = splitLines(m.text);
+      const tot = lines.reduce((n, l) => n + l.length, 0) || 1;
+      let t = offset;
+      for (const l of lines) {
+        const seg = (m.dur * l.length) / tot;
+        const png = join(dir, `line-${String(overlays.length).padStart(3, "0")}.png`);
+        await renderSubLine(l, size, png);
+        overlays.push({ png, text: l, start: t, end: t + seg });
+        t += seg;
+      }
     }
     offset += m.dur + (m.gap ?? gap);
   }
@@ -521,10 +623,11 @@ async function subtitles(item) {
   const vidDur = await ffprobeDur(out);
   if (overlays.length && vidDur - lastEnd > 3) warn.push(`结尾 ${(vidDur - lastEnd).toFixed(1)}s 没有字幕`);
   const warnLine = warn.length ? `\n⚠ 字幕自检:${warn.join(";")}` : "";
+  const timing = byWords === meta.length ? "跟着人声逐字对齐" : byWords ? `${byWords}/${meta.length} 拍逐字对齐,其余按字数估算` : "按字数估算(这条片没有字级时间戳)";
   return {
     video: url,
     subs: overlays.map((o) => ({ text: o.text, start: o.start, end: o.end })),
-    note: `字幕已烧录(${overlays.length} 行)。错字/断句/位置请审。${warnLine}`,
+    note: `字幕已烧录(${overlays.length} 行,${timing})。错字/断句/位置请审。${warnLine}`,
   };
 }
 
