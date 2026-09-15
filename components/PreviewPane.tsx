@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { stageLabel, type Artifacts, type Comment } from "@/lib/stages";
 
@@ -323,46 +323,130 @@ function ScriptEditor({ stage, projectId }: { stage: StageView; projectId: strin
 function CardStrip({ images, cards }: { images: string[]; cards: { text?: string; asset?: string }[] }) {
   const stripRef = useRef<HTMLDivElement>(null);
   const [idx, setIdx] = useState(0);
+  const n = images.length;
 
-  const cardW = () => stripRef.current?.querySelector("figure")?.clientWidth ?? 300;
+  const figs = () =>
+    Array.from(stripRef.current?.querySelectorAll("figure") ?? []) as HTMLElement[];
 
-  const go = (dir: 1 | -1) => {
+  // 用每张卡的真实位置定位,不按"平均宽度"估算 —— 用了真素材的那几拍宽度和字卡不一样
+  const goTo = (i: number) => {
     const el = stripRef.current;
-    if (!el) return;
-    el.scrollBy({ left: dir * (cardW() + 12), behavior: "smooth" });
+    const f = figs()[Math.max(0, Math.min(n - 1, i))];
+    if (!el || !f) return;
+    // scrollIntoView 比 scrollTo 可靠:snap-mandatory 下平滑 scrollTo 会被吸附取消
+    f.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    setIdx(Math.max(0, Math.min(n - 1, i)));
   };
   const onScroll = () => {
     const el = stripRef.current;
     if (!el) return;
-    setIdx(Math.round(el.scrollLeft / (cardW() + 12)));
+    const max = el.scrollWidth - el.clientWidth;
+    // 贴边时直接认边:最后一张卡贴右边缘,按"离中心最近"会算成倒数第二张
+    if (el.scrollLeft <= 2) { setIdx(0); return; }
+    if (el.scrollLeft >= max - 2) { setIdx(n - 1); return; }
+    const center = el.scrollLeft + el.clientWidth / 2;
+    let best = 0;
+    let bestD = Infinity;
+    figs().forEach((f, i) => {
+      const d = Math.abs(f.offsetLeft + f.clientWidth / 2 - center);
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    setIdx(best);
   };
 
+  // 桌面端:竖滚轮直接横滑这条素材带(不然要按住 shift 才能横滚,没人知道)
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) return;
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      const max = el.scrollWidth - el.clientWidth;
+      if (max <= 0) return;
+      const next = el.scrollLeft + e.deltaY;
+      if ((e.deltaY < 0 && el.scrollLeft <= 0) || (e.deltaY > 0 && el.scrollLeft >= max - 1)) return;
+      e.preventDefault();
+      el.scrollLeft = Math.max(0, Math.min(max, next));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  const cur = cards[idx];
+  const curLabel = cur?.asset ? `\u{1F3AC} ${cur.asset}` : (cur?.text ?? "");
+
   return (
-    <div className="relative flex h-full flex-col">
-      <div className="mb-2 flex shrink-0 items-center justify-between">
-        <span className="font-mono text-xs text-muted-foreground">
-          {Math.min(idx + 1, images.length)} / {images.length}
+    <div className="relative flex h-full min-h-[58vh] w-full min-w-0 flex-col lg:min-h-0">
+      <div className="mb-2 flex shrink-0 items-center gap-3">
+        <span className="shrink-0 font-mono text-xs text-muted-foreground">
+          {Math.min(idx + 1, n)} / {n}
         </span>
-        <div className="flex gap-1.5">
-          <button onClick={() => go(-1)} className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:border-foreground/30">←</button>
-          <button onClick={() => go(1)} className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:border-foreground/30">→</button>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={curLabel}>
+          {curLabel}
+        </span>
+        <div className="flex shrink-0 gap-1.5">
+          <button
+            onClick={() => goTo(idx - 1)}
+            disabled={idx <= 0}
+            className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:border-foreground/30 disabled:opacity-30"
+          >
+            ←
+          </button>
+          <button
+            onClick={() => goTo(idx + 1)}
+            disabled={idx >= n - 1}
+            className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:border-foreground/30 disabled:opacity-30"
+          >
+            →
+          </button>
         </div>
       </div>
+
       <div
         ref={stripRef}
         onScroll={onScroll}
-        className="flex min-h-0 flex-1 snap-x snap-mandatory items-center gap-3 overflow-x-auto pb-2"
+        className="flex min-h-0 w-full min-w-0 flex-1 snap-x snap-mandatory items-center gap-3 overflow-x-auto overflow-y-hidden pb-2"
       >
         {images.map((src, i) => (
-          <figure key={i} className="flex h-full shrink-0 snap-center flex-col items-center justify-center">
+          <figure
+            key={i}
+            onClick={() => goTo(i)}
+            className="flex h-full max-h-full shrink-0 snap-center flex-col items-center justify-center"
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={src} alt={`卡 ${i + 1}`} className="max-h-full w-auto rounded-md border border-border" />
-            <figcaption className="mt-1.5 max-w-52 truncate text-center text-[11px] text-muted-foreground">
-              {cards[i]?.asset ? `🎬 ${cards[i].asset}` : (cards[i]?.text ?? "")}
-            </figcaption>
+            <img
+              src={src}
+              alt={`卡 ${i + 1}`}
+              loading="lazy"
+              className={`max-h-full w-auto max-w-[78vw] rounded-md border object-contain sm:max-w-[42vw] lg:max-w-none ${
+                i === idx ? "border-accent/60" : "border-border"
+              }`}
+            />
           </figure>
         ))}
       </div>
+
+      {/* 拍号导航:12 拍时箭头一张张点太慢,点号直接跳 */}
+      {n > 1 && (
+        <div className="mt-1 flex shrink-0 flex-wrap items-center justify-center gap-1">
+          {images.map((_, i) => (
+            <button
+              key={i}
+              onClick={() => goTo(i)}
+              title={cards[i]?.asset ? `🎬 ${cards[i]?.asset}` : (cards[i]?.text ?? `第 ${i + 1} 拍`)}
+              className={`h-5 min-w-5 rounded px-1 font-mono text-[10px] transition ${
+                i === idx
+                  ? "bg-foreground text-background"
+                  : cards[i]?.asset
+                    ? "text-accent hover:bg-muted"
+                    : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -464,7 +548,7 @@ function Tracks({
           <div className="flex w-10 shrink-0 flex-col items-center justify-center font-mono text-[10px] text-muted-foreground">
             画面
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-1">
+          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
             {clips.map((c, i) => (
               <div
                 key={c.name}

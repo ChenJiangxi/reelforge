@@ -95,7 +95,7 @@ export function ProjectWorkspace({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
-        <div className="order-2 min-h-0 lg:order-1 lg:shrink-0">
+        <div className="order-2 min-h-0 min-w-0 lg:order-1 lg:shrink-0">
           <div className="hidden h-full lg:block" style={{ width: chatW }}>
             <ChatPanel projectId={projectId} messages={messages} />
           </div>
@@ -110,7 +110,7 @@ export function ProjectWorkspace({
           title="拖动调整聊天区宽度,双击复位"
           className="order-2 hidden w-1.5 shrink-0 cursor-col-resize self-stretch rounded-full bg-border/60 hover:bg-accent/50 lg:block"
         />
-        <div className="order-1 min-h-0 flex-1 lg:order-3">
+        <div className="order-1 min-h-0 min-w-0 flex-1 lg:order-3">
           <PreviewPane
             stages={stages}
             clips={clips}
