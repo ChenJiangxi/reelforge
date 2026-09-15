@@ -62,7 +62,7 @@ export type Artifacts = {
   cards?: { name: string; text?: string; type?: string; kicker?: string; big?: string; sub?: string; foot?: string }[];
   voiceMeta?: {
     clips: {
-      name: string; text: string; tts?: string; dur: number; gap?: number;
+      name: string; beat?: string; text: string; tts?: string; dur: number; gap?: number;
       /** MiniMax 字级时间戳 [字, 开始ms, 结束ms] —— 字幕按它对齐 */
       words?: [string, number, number][];
       say?: { speed: number; speedRel?: number; pitch: number; emotion: string | null; gap_after?: number };

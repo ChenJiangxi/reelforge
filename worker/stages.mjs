@@ -361,7 +361,7 @@ async function voice(item) {
   for (const c of staged) {
     const { path: p, dur, gap, say, words } = await voiceClip(item, c, dir);
     console.log(`  [voice] ${c.name} ${dur.toFixed(1)}s @${say.speed.toFixed(2)}x pitch${say.pitch >= 0 ? "+" : ""}${say.pitch} ${say.emotion ?? "auto"} gap${gap}`);
-    meta.push({ name: c.name, text: c.text, tts: c.tts || c.text, dur, gap, say, words, file: p });
+    meta.push({ name: c.name, beat: c.beat, text: c.text, tts: c.tts || c.text, dur, gap, say, words, file: p });
   }
   // preview: one mp3 she can listen to straight through
   const preview = join(dir, "preview.mp3");
@@ -395,7 +395,7 @@ async function voice(item) {
   return {
     audio: url,
     wave: waveUrl,
-    voiceMeta: { clips: meta.map(({ name, text, tts, dur, gap, say, words }) => ({ name, text, tts, dur, gap, say, words })), gap: GAP },
+    voiceMeta: { clips: meta.map(({ name, beat, text, tts, dur, gap, say, words }) => ({ name, beat, text, tts, dur, gap, say, words })), gap: GAP },
     note: `音色 ${profile.voice_id} 基准 ${profile.speed}x(${TTS_MODEL}),共 ${total.toFixed(1)}s(${meta.length} 句)。
 每拍的念法(语速是基准的倍数,⏸ = 句中有停顿):
 ${sayLine}
@@ -445,6 +445,36 @@ async function ensureInputs(item) {
   return { visuals, voices, meta };
 }
 
+// ── 运镜:每拍不能都是同一个缓慢推近 ──────────────────────────────────
+// 原来所有画面都套 z='1+0.10*on/N'(居中匀速推近)。同一个动作重复 6-12 遍,
+// 就是最容易被认出来的"AI 做的视频"。按节拍分配不同的运镜,并且硬性要求
+// 相邻两拍不一样 —— 和配音那边"相邻两拍念法不能一样"是同一条规矩。
+const CAM_X = "iw/2-(iw/zoom/2)";
+const CAM_Y = "ih/2-(ih/zoom/2)";
+const CAM_MOVES = {
+  pushIn: (n) => ({ z: `1+0.11*on/${n}`, x: CAM_X, y: CAM_Y }),
+  pushSoft: (n) => ({ z: `1+0.06*on/${n}`, x: CAM_X, y: CAM_Y }),
+  pullOut: (n) => ({ z: `1.11-0.10*on/${n}`, x: CAM_X, y: CAM_Y }),
+  panRight: (n) => ({ z: "1.07", x: `(iw-iw/zoom)*on/${n}`, y: CAM_Y }),
+  panLeft: (n) => ({ z: "1.07", x: `(iw-iw/zoom)*(1-on/${n})`, y: CAM_Y }),
+  driftUp: (n) => ({ z: "1.08", x: CAM_X, y: `(ih-ih/zoom)*(1-on/${n})` }),
+  hold: () => ({ z: "1.015", x: CAM_X, y: CAM_Y }),
+};
+// 每个节拍的候选,按优先级;取第一个和上一拍不同的
+const CAM_BY_BEAT = {
+  hook: ["pushIn", "panRight"],
+  context: ["panRight", "driftUp", "pushSoft"],
+  evidence: ["driftUp", "pushSoft", "panLeft"],
+  turn: ["pullOut", "hold"],
+  landing: ["hold", "pushSoft"],
+};
+const CAM_FALLBACK = ["pushSoft", "panRight", "driftUp", "pullOut", "hold", "panLeft"];
+
+function pickCamera(beat, index, prev) {
+  const candidates = CAM_BY_BEAT[beat] || [CAM_FALLBACK[index % CAM_FALLBACK.length], ...CAM_FALLBACK];
+  return candidates.find((c) => c !== prev) || candidates[0];
+}
+
 async function edit(item) {
   const { visuals, voices, meta } = await ensureInputs(item);
   if (!visuals.length || visuals.length !== voices.length) throw new Error("画面和配音数量对不上");
@@ -452,8 +482,10 @@ async function edit(item) {
   const dir = workDir(item, "edit");
   const fps = 30;
 
-  // 1) per-clip video segments: card/image gets a subtle zoom; 录屏裁切铺满
+  // 1) per-clip video segments: 静态画面按节拍给不同运镜;录屏裁切铺满
   const segs = [];
+  let lastMove = null;
+  const cameraLog = [];
   for (let i = 0; i < visuals.length; i++) {
     const segDur = meta[i].dur + (meta[i].gap ?? GAP);
     const frames = Math.ceil(segDur * fps);
@@ -461,10 +493,14 @@ async function edit(item) {
     if (visuals[i].kind === "video" || visuals[i].kind === "anim") {
       await ffmpeg(["-stream_loop", "-1", "-i", visuals[i].path, "-t", segDur.toFixed(3), "-vf", `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${fps},format=yuv420p`, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
     } else {
-      const zoom = `scale=${W * 2}:${H * 2}:flags=lanczos,zoompan=z='1+0.10*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${fps},format=yuv420p`;
+      const move = pickCamera(meta[i].beat, i, lastMove);
+      lastMove = move;
+      cameraLog.push(`${meta[i].name} ${move}`);
+      const m = CAM_MOVES[move](frames);
+      const zoom = `scale=${W * 2}:${H * 2}:flags=lanczos,zoompan=z='${m.z}':x='${m.x}':y='${m.y}':d=1:s=${W}x${H}:fps=${fps},format=yuv420p`;
       await ffmpeg(["-loop", "1", "-framerate", String(fps), "-t", segDur.toFixed(3), "-i", visuals[i].path, "-vf", zoom, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
     }
-    console.log(`  [edit] seg ${meta[i].name} ${segDur.toFixed(1)}s done (${visuals[i].kind})`);
+    console.log(`  [edit] seg ${meta[i].name} ${segDur.toFixed(1)}s done (${visuals[i].kind}${lastMove ? ", " + lastMove : ""})`);
     segs.push(seg);
   }
 
@@ -507,7 +543,8 @@ async function edit(item) {
   const warnLine = warn.length ? `\n⚠ 剪辑自检:${warn.join(";")}` : "";
   return {
     video: url,
-    note: `粗剪 ${total.toFixed(1)}s,${visuals.length} 拍${bgmFile ? "(带 BGM 垫底)" : "(无 BGM)"}。节奏/画面对位请审。${warnLine}`,
+    note: `粗剪 ${total.toFixed(1)}s,${visuals.length} 拍${bgmFile ? "(带 BGM 垫底)" : "(无 BGM)"}。${cameraLog.length ? `运镜:${cameraLog.join("  ")}` : ""}
+节奏/画面对位请审。${warnLine}`,
   };
 }
 
