@@ -427,12 +427,36 @@ function takeSummary(meta) {
     .join("\n");
 }
 
+// ── 相邻两拍的音高不能硬跳 ──────────────────────────────────────
+// 实测(2026-09-15):c09(calm,pitch-2) 收尾到 c10(happy,pitch+1) 开头,
+// 落差 2.17 个半音,接近一个小三度。LLM 给每拍单独定 pitch,不知道相邻两拍
+// 紧挨着播放 —— 这种硬跳变听起来就是"换了个人在录",不是"语气变了"。
+// 语速和情绪词可以跳(那是抑扬顿挫),但 pitch 是最接近直接改变声音本身的参数,
+// 跳变必须收紧,靠事后夹一遍,不指望 LLM 自己看着办。
+const MAX_PITCH_STEP = 2;
+function smoothPitch(clips) {
+  const out = clips.map((c) => ({ ...c, say: { ...(c.say || {}) } }));
+  let adjusted = [];
+  for (let i = 1; i < out.length; i++) {
+    const prev = Math.round(Number(out[i - 1].say.pitch) || 0);
+    const raw = Math.round(Number(out[i].say.pitch) || 0);
+    const step = Math.max(-MAX_PITCH_STEP, Math.min(MAX_PITCH_STEP, raw - prev));
+    const smoothed = prev + step;
+    if (smoothed !== raw) adjusted.push(`${out[i].name} ${raw >= 0 ? "+" : ""}${raw}→${smoothed >= 0 ? "+" : ""}${smoothed}`);
+    out[i].say.pitch = smoothed;
+  }
+  if (adjusted.length) console.log(`  [voice] 音高跳变收紧:${adjusted.join("  ")}`);
+  out.adjustments = adjusted;
+  return out;
+}
+
 async function voice(item) {
   const clips = item.upstream?.script?.clips;
   if (!clips?.length) throw new Error("上游脚本没有 clips");
   const dir = workDir(item, "voice");
   const profile = VOICES[item.voice] || VOICES["clone-zh"];
-  const staged = await withDelivery(item, clips);
+  const staged = smoothPitch(await withDelivery(item, clips));
+  const pitchFixes = staged.adjustments || [];
 
   // 出两版让她挑。配音是这条片里最难用规则定死的一步 —— 与其我猜"什么叫更好听",
   // 不如给两个方向明确不同的版本,她听完点一个。TTS 很便宜,多一版值这个钱。
@@ -460,6 +484,7 @@ async function voice(item) {
   if (meta.length >= 4 && subdued / meta.length > 0.5) {
     warn.push(`${subdued}/${meta.length} 拍是 fluent/calm(收着念),情绪太内敛,多数节拍该用 happy/surprised`);
   }
+  if (pitchFixes.length) warn.push(`${pitchFixes.length} 处相邻音高跳变太大,已收紧:${pitchFixes.join("  ")}`);
   const warnLine = warn.length ? `\n⚠ 配音自检:${warn.join(";")}` : "";
 
   const pick = ({ name, beat, text, tts, dur, gap, say, words, head }) => ({ name, beat, text, tts, dur, gap, say, words, head });
