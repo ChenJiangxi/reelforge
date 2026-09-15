@@ -27,7 +27,7 @@ calm / fluent / whisper。**`fluent` 不是"中性讲解"，是"没表情"** —
 的情绪。下面的表里刻意不给 context/evidence 配 fluent，因为这两种节拍占一条片的大头，
 一旦它们是 fluent，整条片听起来就是温柔念白，不管 hook 多冲都救不回来。
 
-- **hook 钩子**：speed 1.12–1.25，pitch +1 ~ +3，emotion surprised 或 happy，
+- **hook 钩子**：speed 1.12–1.25，pitch +1 ~ +2，emotion surprised 或 happy，
   第一句里插一个 0.15–0.25 秒的停顿（先抛再砸），gap_after 0.08–0.15。
 - **context 铺垫**：speed 0.98–1.08，pitch 0 ~ +1，emotion **happy**（讲人话、有兴致地
   在跟人聊，不是照本宣科），少用停顿，gap_after 0.18–0.25。
@@ -36,7 +36,7 @@ calm / fluent / whisper。**`fluent` 不是"中性讲解"，是"没表情"** —
 - **turn 转折**：speed 0.85–0.95，pitch -1 ~ -2，emotion calm，
   停顿写在**上一拍的 gap_after**（给到 0.35），这拍自己开头不要加标记。
   这是全片唯一该用"沉下来"的地方——用在这儿才是对比,用在前面就是没精神。
-- **landing 落点**：speed 0.85–0.95，pitch -2 ~ -3，emotion calm，
+- **landing 落点**：speed 0.85–0.95，pitch -1 ~ -2，emotion calm，
   最后一句前可以在句中停 0.3（写在 tts 里），gap_after 0.3。
 
 ## 四条硬性要求（自检会拦）
@@ -47,6 +47,10 @@ calm / fluent / whisper。**`fluent` 不是"中性讲解"，是"没表情"** —
 4. **`fluent`/`calm` 不能超过全片一半**：这两个是"收着念"的档,用多了就是温柔念白。
    有情绪色彩的档(happy/surprised/sad/angry 等)至少要占一半以上——包括 context 和
    evidence 这些"讲解"节拍,讲解不等于没表情。
+5. **全片开头到结尾的 pitch 跨度不超过 4**：每一步都平滑不代表整体不漂移——十二拍
+   一步一步从 +3 走到 -3,回头听开头和结尾就是两个人。这条工程会强制收紧(线性压缩
+   整片跨度,不止是夹相邻两拍),但别把这个当兜底:hook 起手别标太高(+1~+2 够了),
+   landing 落点也别标太低(-1~-2)。
 
 ## 几个能救命的小手法
 

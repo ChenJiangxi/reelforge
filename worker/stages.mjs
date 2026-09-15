@@ -450,12 +450,37 @@ function smoothPitch(clips) {
   return out;
 }
 
+// ── 全片的音高跨度也要收 ──────────────────────────────────────────
+// 相邻两拍不硬跳(上面那道闸)只保证"每一步都平滑",挡不住"走了很多小步,
+// 十二拍加起来还是从 +3 走到 -3"——她 2026-09-15 听完这版说的原话是
+// "前面、中间和最后结尾的音色不一样",量了一下 pitch 序列,整片跨度真的到了
+// 5-6 档(教案设计成开头冲、结尾沉,本意没错,但拍数一多,两头就成了两个音域)。
+// 且实测基频和 pitch 参数不是死板的线性关系(同样的参数,不同文本量出来的
+// 基频能差好几十 Hz),压参数的跨度是唯一测得动、也控得住的手段。
+const MAX_PITCH_RANGE = 4; // 开头到结尾最多留这么大的设计跨度
+function capPitchRange(clips) {
+  const pitches = clips.map((c) => Math.round(Number(c.say.pitch) || 0));
+  const lo = Math.min(...pitches), hi = Math.max(...pitches);
+  const range = hi - lo;
+  if (range <= MAX_PITCH_RANGE) return clips;
+  const mean = pitches.reduce((a, b) => a + b, 0) / pitches.length;
+  const scale = MAX_PITCH_RANGE / range;
+  const out = clips.map((c, i) => {
+    const shrunk = Math.round(mean + (pitches[i] - mean) * scale);
+    return shrunk === pitches[i] ? c : { ...c, say: { ...c.say, pitch: shrunk } };
+  });
+  console.log(`  [voice] 全片音高跨度 ${range}→${MAX_PITCH_RANGE}:${pitches.join(" ")} → ${out.map((c) => c.say.pitch).join(" ")}`);
+  return out;
+}
+
 async function voice(item) {
   const clips = item.upstream?.script?.clips;
   if (!clips?.length) throw new Error("上游脚本没有 clips");
   const dir = workDir(item, "voice");
   const profile = VOICES[item.voice] || VOICES["clone-zh"];
-  const staged = smoothPitch(await withDelivery(item, clips));
+  // 先压整片跨度(线性缩放,不会破坏相邻步差 <=2 的保证 —— 等比例收缩只会更平滑,
+  // 不会更陡),再收紧相邻跳变(缩放后理论上不会再触发,留着是双保险)。
+  const staged = smoothPitch(capPitchRange(await withDelivery(item, clips)));
   const pitchFixes = staged.adjustments || [];
 
   // 出两版让她挑。配音是这条片里最难用规则定死的一步 —— 与其我猜"什么叫更好听",
