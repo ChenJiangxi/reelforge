@@ -281,7 +281,10 @@ async function footage(item) {
         const local = join(workDir(item, "assets"), asset.name);
         if (!existsSync(local)) await download(asset.url, local);
         const poster = join(dir, `${clip.name}-poster.png`);
-        await ffmpeg(["-ss", "0.5", "-i", local, "-frames:v", "1", "-vf", `scale=${size.width}:${size.height}:force_original_aspect_ratio=increase,crop=${size.width}:${size.height},setsar=1`, poster]);
+        const pInfo = await ffprobeInfo(local);
+        const pvs = (pInfo.streams || []).find((st) => st.codec_type === "video") || {};
+        // 预览图走和成片同一套进画规则,免得网页上看着好好的、片子里被裁了
+        await ffmpeg(["-ss", "0.5", "-i", local, "-frames:v", "1", "-vf", fitChain(size.width, size.height, pvs.width, pvs.height).chain, poster]);
         const up = await upload(item.projectId, poster, `asset-${clip.name}-poster.png`);
         posterUrl = up.url;
       }
@@ -668,6 +671,93 @@ function planTransitions(meta) {
   return out;
 }
 
+// ── 素材视频进画:不裁掉功能,也不硬循环 ─────────────────────────────
+// 1) 画幅对不上就"整幅放进去",背后垫一层它自己的模糊放大版当底。原来的
+//    force_original_aspect_ratio=increase + crop 是中心裁切:一段 3:4 的录屏
+//    进 9:16 会被切掉左右各 12.5%,分数、右侧按钮这些功能直接不见(2026-09-16
+//    「遇见正缘」c01 就是这么废的)。
+// 2) 素材比这一拍短就先放慢(最多 1.5 倍),还不够就正放+倒放接龙(首尾同帧,
+//    没有跳切),都不行才冻最后一帧。原来的 -stream_loop -1 是硬循环,4.2 秒
+//    的录屏在 11.5 秒的一拍里转 2.7 圈,一眼就看出来是凑时长。
+const FIT_TOLERANCE = 0.08; // 宽高比差在 8% 以内,照旧铺满裁切(切掉的是边角,不是内容)
+const MAX_SLOWDOWN = 1.5;   // 再慢就不像正常操作了
+const MAX_REVERSIBLE = 20;  // reverse 要把整段读进内存,长素材不走接龙
+
+function evenPx(n) {
+  return Math.max(2, Math.round(n / 2) * 2);
+}
+
+// 返回一段可以直接接在 -vf 里的滤镜(含标签分支),外加一句人话说明用了哪种进画方式。
+function fitChain(W, H, srcW, srcH) {
+  const tAR = W / H;
+  const sAR = srcW && srcH ? srcW / srcH : tAR;
+  if (Math.abs(sAR - tAR) / tAR <= FIT_TOLERANCE) {
+    return { chain: `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1`, mode: "铺满裁切" };
+  }
+  const bw = evenPx(W / 4), bh = evenPx(H / 4); // 先缩小再模糊再放大,比直接糊 1080p 快一个量级
+  const fw = evenPx(W * 0.94), fh = evenPx(H * 0.94); // 留一点内缩,模糊底才像是设计过的
+  return {
+    chain:
+      "split=2[bg][fg];" +
+      `[bg]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},` +
+      `boxblur=luma_radius=${Math.floor(Math.min(bw, bh) / 12)}:luma_power=2,` +
+      `eq=brightness=-0.10:saturation=0.7,scale=${W}:${H},setsar=1[bgb];` +
+      `[fg]scale=${fw}:${fh}:force_original_aspect_ratio=decrease,setsar=1[fgs];` +
+      "[bgb][fgs]overlay=(W-w)/2:(H-h)/2",
+    mode: "整幅放进去+模糊底",
+  };
+}
+
+// 把一段素材视频(或动画卡 webm)渲成正好 segDur 长的一拍。
+// setsar=1 是关键:素材如果带着非方形像素的 SAR/DAR 元数据(实见她的一个上传素材),
+// scale+crop 完全不会清掉这个标签,原样传到成片,变成"编码 1080x1920、播放器按
+// 5040x1920 显示"——横向被拉成宽屏。
+export async function renderAssetSeg(src, out, { W, H, fps, segDur }) {
+  const info = await ffprobeInfo(src);
+  const vs = (info.streams || []).find((s) => s.codec_type === "video") || {};
+  const srcDur = parseFloat(info.format?.duration) || 0;
+  const { chain, mode } = fitChain(W, H, vs.width, vs.height);
+  const notes = [mode];
+
+  let input = src;
+  let speed = 1;
+  let hold = 0;
+  let loop = false;
+  if (srcDur > 0.1 && srcDur < segDur - 0.05) {
+    speed = Math.min(MAX_SLOWDOWN, segDur / srcDur);
+    if (speed > 1.02) notes.push(`放慢 ${speed.toFixed(2)}x`);
+    if (srcDur * speed < segDur - 0.05) {
+      if (srcDur <= MAX_REVERSIBLE) {
+        // 正放 + 倒放接成一段:接缝两端是同一帧,循环起来没有跳切。
+        // trim=start_frame=1 去掉倒放重复的那一帧。
+        input = out.replace(/\.mp4$/, "-pp.mp4");
+        await ffmpeg([
+          "-i", src, "-filter_complex",
+          "[0:v]split=2[f][r];[r]reverse,trim=start_frame=1,setpts=PTS-STARTPTS[rv];[f][rv]concat=n=2:v=1:a=0[v]",
+          "-map", "[v]", "-an", "-c:v", "libx264", "-crf", "16", "-preset", "veryfast", "-pix_fmt", "yuv420p", input,
+        ]);
+        loop = true;
+        notes.push(`正倒放接龙 ${(segDur / (2 * srcDur * speed)).toFixed(1)} 轮`);
+      } else {
+        hold = segDur - srcDur * speed;
+        notes.push(`冻最后一帧 ${hold.toFixed(1)}s`);
+      }
+    }
+  }
+
+  const vf = [
+    ...(speed > 1.02 ? [`setpts=${speed.toFixed(4)}*PTS`] : []),
+    ...(hold > 0.05 ? [`tpad=stop_mode=clone:stop_duration=${hold.toFixed(3)}`] : []),
+    chain, `fps=${fps}`, "format=yuv420p",
+  ].join(",");
+
+  await ffmpeg([
+    ...(loop ? ["-stream_loop", "-1"] : []), "-i", input, "-t", segDur.toFixed(3),
+    "-vf", vf, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", out,
+  ]);
+  return notes.join(" / ");
+}
+
 async function edit(item) {
   const { visuals, voices, meta } = await ensureInputs(item);
   if (!visuals.length || visuals.length !== voices.length) throw new Error("画面和配音数量对不上");
@@ -687,11 +777,9 @@ async function edit(item) {
     const segDur = beatDur + (trans[i] ? trans[i].dur : 0);
     const frames = Math.ceil(segDur * fps);
     const seg = join(dir, `seg-${meta[i].name}.mp4`);
+    let assetNote = "";
     if (visuals[i].kind === "video" || visuals[i].kind === "anim") {
-      // setsar=1 是关键:素材视频如果带着非方形像素的 SAR/DAR 元数据(实见她的一个
-      // 上传素材,scale+crop 完全不会清掉这个标签,原样传到最终成片,变成
-      // "编码尺寸 1080x1920,但播放器按 5040x1920 显示"——横向被拉伸成宽屏。
-      await ffmpeg(["-stream_loop", "-1", "-i", visuals[i].path, "-t", segDur.toFixed(3), "-vf", `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,fps=${fps},format=yuv420p`, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
+      assetNote = await renderAssetSeg(visuals[i].path, seg, { W, H, fps, segDur });
     } else {
       const move = pickCamera(meta[i].beat, i, lastMove);
       lastMove = move;
@@ -700,7 +788,7 @@ async function edit(item) {
       const zoom = `scale=${W * 2}:${H * 2}:flags=lanczos,zoompan=z='${m.z}':x='${m.x}':y='${m.y}':d=1:s=${W}x${H}:fps=${fps},setsar=1,format=yuv420p`;
       await ffmpeg(["-loop", "1", "-framerate", String(fps), "-t", segDur.toFixed(3), "-i", visuals[i].path, "-vf", zoom, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
     }
-    console.log(`  [edit] seg ${meta[i].name} ${segDur.toFixed(1)}s done (${visuals[i].kind}${lastMove ? ", " + lastMove : ""})`);
+    console.log(`  [edit] seg ${meta[i].name} ${segDur.toFixed(1)}s done (${visuals[i].kind}${assetNote ? ", " + assetNote : ""}${lastMove ? ", " + lastMove : ""})`);
     segs.push(seg);
   }
 
