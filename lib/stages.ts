@@ -50,6 +50,9 @@ export function platformForAspect(aspect: string): string {
 
 // Media fields hold /api/media/<projectId>/<file> URLs served from MEDIA_DIR.
 export type VoiceMeta = {
+  /** 这一版每拍音频文件的文件名后缀(A 版空字符串,B 版 "-b")—— 整段一次合成后
+   * 每拍从同一份音频里切出来,ensureInputs 靠它找到对应文件,不重新调 TTS。 */
+  tag?: string;
   clips: {
     name: string; beat?: string; text: string; tts?: string; dur: number; gap?: number;
     /** 这拍音频前面被裁掉的空白(秒) —— 拼接时要从这儿开始截 */

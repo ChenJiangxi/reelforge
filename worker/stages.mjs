@@ -408,13 +408,97 @@ function punchier(say = {}) {
 }
 
 // 合成一整版配音(一个 take):逐拍 TTS → 拼成一条能从头听到尾的 mp3 → 出波形图。
-async function renderTake(item, staged, dir, tag, fileBase) {
-  const meta = [];
-  for (const c of staged) {
-    const { path: p, dur, gap, say, words, head } = await voiceClip(item, c, dir, tag);
-    console.log(`  [voice]${tag ? " B" : " A"} ${c.name} ${dur.toFixed(1)}s @${say.speed.toFixed(2)}x pitch${say.pitch >= 0 ? "+" : ""}${say.pitch} ${say.emotion ?? "auto"} gap${gap}`);
-    meta.push({ name: c.name, beat: c.beat, text: c.text, tts: c.tts || c.text, dur, gap, say, words, head, file: p });
+// ── 全片一次合成,再切回每拍 ──────────────────────────────────────────
+// 2026-09-15 她连续听出配音"像换了人":查过 MiniMax 接口文档,它不支持一次调用里
+// 逐句变语气,也没有跨调用保持音色的机制——12 次独立调用之间的音色漂移是接口
+// 本身的限制,不是参数没调好。测过:分开调用最大接缝跳变 4+ 个半音;整段一次生成,
+// 同样时间跨度的天然漂移只有 0-1 个半音。改法:一条稿子一次 tts() 调用,
+// 拍与拍之间靠 <#x#> 停顿标记断句,合成完按字级时间戳切回每拍单独的文件——
+// 下游 ensureInputs/edit/subtitles 还是按"每拍一个文件"读,不用跟着大改。
+// 代价:每拍不再有独立的语速/音高/情绪,整条片统一一套念法(她已经听过这个
+// 效果并确认"很好了")。gap_after 和句中停顿标记还是按拍设计,保留了节奏起伏。
+const TAKE_BASE_SAY = { speed: 0.94, pitch: 1, emotion: "happy", gap_after: 0.2 }; // 落在她确认过的 ~1.18x
+
+async function synthesizeWholeTake(item, staged, dir, tag, takeSay) {
+  const profile = VOICES[item.voice] || VOICES["clone-zh"];
+  const clean = (c) => stripStageDirections(c.tts || c.text).replace(/^\s*<#[\d.]+#>/, "");
+  const texts = staged.map(clean);
+  const parts = [];
+  staged.forEach((c, i) => {
+    parts.push(texts[i]);
+    if (i < staged.length - 1) {
+      const gap = clamp(c.say?.gap_after, 0.05, 0.8, TAKE_BASE_SAY.gap_after);
+      parts.push(`<#${gap.toFixed(2)}#>`);
+    }
+  });
+  const joined = parts.join("");
+  const d = delivery(profile, takeSay);
+
+  const wholeFile = join(dir, `whole${tag}.mp3`);
+  const wordsFile = join(dir, `whole${tag}.words.json`);
+  const marker = join(dir, `whole${tag}.txt`);
+  const fingerprint = JSON.stringify([joined, d.speed, d.pitch, d.emotion ?? "", TTS_MODEL]);
+  const stale = !existsSync(wholeFile) || !existsSync(marker) || readFileSync(marker, "utf8") !== fingerprint;
+  let rawWords;
+  if (stale) {
+    console.log(`  [voice]${tag ? " B" : " A"} 整段合成中(${joined.length} 字)…`);
+    const { audio, words } = await tts(joined, profile, takeSay);
+    writeFileSync(wholeFile, audio);
+    if (words) writeFileSync(wordsFile, JSON.stringify(words));
+    writeFileSync(marker, fingerprint);
+    rawWords = words;
+  } else {
+    try { rawWords = JSON.parse(readFileSync(wordsFile, "utf8")); } catch { rawWords = null; }
   }
+  if (!rawWords?.length) throw new Error("整段配音没拿到字级时间戳,没法切回每拍(字幕/剪辑都靠它对齐)");
+
+  // 按累计字符数切,不能按条目数切:MiniMax 会把重复标点合并成一个词条
+  // (比如"！！"是一条,占 2 个字符),按条目数切会systematic地偏移。
+  const results = [];
+  let wi = 0;
+  for (let ci = 0; ci < staged.length; ci++) {
+    const target = [...texts[ci]].length;
+    let acc = 0;
+    const startWi = wi;
+    while (wi < rawWords.length && acc < target) {
+      acc += [...rawWords[wi][0]].length;
+      wi++;
+    }
+    results.push(rawWords.slice(startWi, wi));
+  }
+
+  const meta = [];
+  for (let i = 0; i < staged.length; i++) {
+    const cw = results[i];
+    const p = join(dir, `${staged[i].name}${tag}.mp3`);
+    const gap = clamp(staged[i].say?.gap_after, 0.05, 0.8, TAKE_BASE_SAY.gap_after);
+    if (!cw.length) {
+      // 这拍一个字都没分到(极端情况,比如空文本):留一段极短静音兜底,别让整段崩掉
+      await ffmpeg(["-f", "lavfi", "-i", "anullsrc=r=32000:cl=mono", "-t", "0.3", p]);
+      meta.push({ name: staged[i].name, beat: staged[i].beat, text: staged[i].text, tts: staged[i].tts || staged[i].text, dur: 0.3, gap, head: 0, words: [], say: { speed: d.speed, speedRel: 1, pitch: d.pitch, emotion: d.emotion ?? null, gap_after: gap }, file: p });
+      continue;
+    }
+    const startMs = cw[0][1];
+    const endMs = cw[cw.length - 1][2];
+    const startSec = Math.max(0, startMs / 1000 - 0.02);
+    const dur = Number(((endMs - startMs) / 1000 + 0.08).toFixed(3)); // +0.08 收尾余韵,和原来逐拍合成的口径一致
+    // -ss 放在 -i 之后精确解码切,不用前置快速 seek(对切点精度要求高——
+    // 下游剪辑的转场、时长自检都靠这个数字)
+    await ffmpeg(["-i", wholeFile, "-ss", startSec.toFixed(3), "-t", dur.toFixed(3), "-c:a", "libmp3lame", "-q:a", "4", p]);
+    const words = cw.map(([w, b, e]) => [w, Math.max(0, b - startMs), Math.max(0, e - startMs)]);
+    meta.push({
+      name: staged[i].name, beat: staged[i].beat, text: staged[i].text, tts: staged[i].tts || staged[i].text,
+      dur, gap, head: 0, words,
+      say: { speed: d.speed, speedRel: clamp(Math.abs(Number(staged[i].say?.speed)), 0.8, 1.15, 1), pitch: d.pitch, emotion: d.emotion ?? null, gap_after: gap },
+      file: p,
+    });
+  }
+  console.log(`  [voice]${tag ? " B" : " A"} 切回 ${meta.length} 拍,合计 ${meta.reduce((n, m) => n + m.dur, 0).toFixed(1)}s @${d.speed.toFixed(2)}x pitch${d.pitch >= 0 ? "+" : ""}${d.pitch} ${d.emotion ?? "auto"}`);
+  return meta;
+}
+
+async function renderTake(item, staged, dir, tag, fileBase, takeSay) {
+  const meta = await synthesizeWholeTake(item, staged, dir, tag, takeSay);
   const preview = join(dir, `${fileBase}.mp3`);
   const inputs = meta.flatMap((m) => ["-i", m.file]);
   const filters = meta.map((m, i) => `[${i}:a]aresample=44100,atrim=${(m.head ?? 0).toFixed(3)}:${((m.head ?? 0) + m.dur).toFixed(3)},asetpts=PTS-STARTPTS,apad=pad_dur=${m.gap.toFixed(3)}[a${i}]`).join(";");
@@ -428,114 +512,58 @@ async function renderTake(item, staged, dir, tag, fileBase) {
   return { url, waveUrl, total, meta };
 }
 
-function takeSummary(meta) {
-  return meta
-    .map((m) => `${m.name} ${m.dur.toFixed(1)}s @${m.say.speed.toFixed(2)}x${m.say.pitch ? ` pitch${m.say.pitch > 0 ? "+" : ""}${m.say.pitch}` : ""}${m.say.emotion ? ` ${m.say.emotion}` : ""}${/<#[\d.]+#>/.test(m.tts) ? " ⏸" : ""}`)
-    .join("\n");
-}
 
-// ── 相邻两拍的音高不能硬跳 ──────────────────────────────────────
-// 实测(2026-09-15):c09(calm,pitch-2) 收尾到 c10(happy,pitch+1) 开头,
-// 落差 2.17 个半音,接近一个小三度。LLM 给每拍单独定 pitch,不知道相邻两拍
-// 紧挨着播放 —— 这种硬跳变听起来就是"换了个人在录",不是"语气变了"。
-// 语速和情绪词可以跳(那是抑扬顿挫),但 pitch 是最接近直接改变声音本身的参数,
-// 跳变必须收紧,靠事后夹一遍,不指望 LLM 自己看着办。
-const MAX_PITCH_STEP = 2;
-function smoothPitch(clips) {
-  const out = clips.map((c) => ({ ...c, say: { ...(c.say || {}) } }));
-  let adjusted = [];
-  for (let i = 1; i < out.length; i++) {
-    const prev = Math.round(Number(out[i - 1].say.pitch) || 0);
-    const raw = Math.round(Number(out[i].say.pitch) || 0);
-    const step = Math.max(-MAX_PITCH_STEP, Math.min(MAX_PITCH_STEP, raw - prev));
-    const smoothed = prev + step;
-    if (smoothed !== raw) adjusted.push(`${out[i].name} ${raw >= 0 ? "+" : ""}${raw}→${smoothed >= 0 ? "+" : ""}${smoothed}`);
-    out[i].say.pitch = smoothed;
-  }
-  if (adjusted.length) console.log(`  [voice] 音高跳变收紧:${adjusted.join("  ")}`);
-  out.adjustments = adjusted;
-  return out;
-}
 
-// ── 全片的音高跨度也要收 ──────────────────────────────────────────
-// 相邻两拍不硬跳(上面那道闸)只保证"每一步都平滑",挡不住"走了很多小步,
-// 十二拍加起来还是从 +3 走到 -3"——她 2026-09-15 听完这版说的原话是
-// "前面、中间和最后结尾的音色不一样",量了一下 pitch 序列,整片跨度真的到了
-// 5-6 档(教案设计成开头冲、结尾沉,本意没错,但拍数一多,两头就成了两个音域)。
-// 且实测基频和 pitch 参数不是死板的线性关系(同样的参数,不同文本量出来的
-// 基频能差好几十 Hz),压参数的跨度是唯一测得动、也控得住的手段。
-const MAX_PITCH_RANGE = 4; // 开头到结尾最多留这么大的设计跨度
-function capPitchRange(clips) {
-  // 第二道防线:就算 withDelivery 又漏了一拍,这里也不该让整个配音阶段崩掉。
-  const pitches = clips.map((c) => Math.round(Number(c.say?.pitch) || 0));
-  const lo = Math.min(...pitches), hi = Math.max(...pitches);
-  const range = hi - lo;
-  if (range <= MAX_PITCH_RANGE) return clips;
-  const mean = pitches.reduce((a, b) => a + b, 0) / pitches.length;
-  const scale = MAX_PITCH_RANGE / range;
-  const out = clips.map((c, i) => {
-    const shrunk = Math.round(mean + (pitches[i] - mean) * scale);
-    return shrunk === pitches[i] ? c : { ...c, say: { ...(c.say || {}), pitch: shrunk } };
-  });
-  console.log(`  [voice] 全片音高跨度 ${range}→${MAX_PITCH_RANGE}:${pitches.join(" ")} → ${out.map((c) => c.say.pitch).join(" ")}`);
-  return out;
-}
 
 async function voice(item) {
   const clips = item.upstream?.script?.clips;
   if (!clips?.length) throw new Error("上游脚本没有 clips");
   const dir = workDir(item, "voice");
   const profile = VOICES[item.voice] || VOICES["clone-zh"];
-  // 先压整片跨度(线性缩放,不会破坏相邻步差 <=2 的保证 —— 等比例收缩只会更平滑,
-  // 不会更陡),再收紧相邻跳变(缩放后理论上不会再触发,留着是双保险)。
-  const staged = smoothPitch(capPitchRange(await withDelivery(item, clips)));
-  const pitchFixes = staged.adjustments || [];
+  // withDelivery 仍然有用:老项目/打回批注时补一遍 gap_after 和句中停顿标记 ——
+  // 这两样还是按拍设计的,决定节奏起伏。speed/pitch/emotion 三个字段现在只是
+  // 历史遗留(界面/日志里还会显示),真正合成用的是下面统一的 TAKE_BASE_SAY,
+  // 原因见 synthesizeWholeTake 的注释。
+  const staged = await withDelivery(item, clips);
 
-  // 出两版让她挑。配音是这条片里最难用规则定死的一步 —— 与其我猜"什么叫更好听",
-  // 不如给两个方向明确不同的版本,她听完点一个。TTS 很便宜,多一版值这个钱。
-  const takeA = await renderTake(item, staged, dir, "", "voice-preview");
-  const stagedB = staged.map((c) => ({ ...c, say: punchier(c.say) }));
-  const takeB = await renderTake(item, stagedB, dir, "-b", "voice-preview-b");
+  // 出两版让她挑。配音是这条片里最难用规则定死的一步,给两个方向让她听完点一个。
+  const takeA = await renderTake(item, staged, dir, "", "voice-preview", TAKE_BASE_SAY);
+  const takeB = await renderTake(item, staged, dir, "-b", "voice-preview-b", punchier(TAKE_BASE_SAY));
 
   const meta = takeA.meta;
   const dev = Math.abs(takeA.total - item.duration) / item.duration;
   const warn = [];
   if (dev > 0.3) warn.push(`配音总长偏离目标 ${Math.round(dev * 100)}%(目标 ~${item.duration}s)`);
   const longClip = meta.find((m) => m.dur > 20);
-  if (longClip) warn.push(`${longClip.name} 太长(${longClip.dur.toFixed(1)}s),可能念不过来`);
-  // 念经自检:整片语速挤在一起 / 没有停顿 = 平。这是这条片子最常见的死法。
-  const speeds = meta.map((m) => m.say.speed);
-  const spread = Math.max(...speeds) - Math.min(...speeds);
-  if (spread < 0.12) warn.push(`整片语速几乎没变化(最快 ${Math.max(...speeds).toFixed(2)}x / 最慢 ${Math.min(...speeds).toFixed(2)}x),听起来会像念经`);
+  if (longClip) warn.push(`${longClip.name} 太长(${longClip.dur.toFixed(1)}s),切分可能不准`);
   const paused = meta.filter((m) => /<#[\d.]+#>/.test(m.tts)).length;
   if (paused === 0) warn.push("全片没有一处句中停顿,钩子和数字砸不下去");
-  const flat = meta.filter((m, i) => i > 0 && Math.abs(m.say.speed - meta[i - 1].say.speed) < 0.03 && m.say.emotion === meta[i - 1].say.emotion);
-  if (flat.length >= 2) warn.push(`${flat.map((m) => m.name).join("/")} 和上一拍念法完全一样`);
-  // fluent/calm 是"收着念"的档,超过一半就是温柔念白 —— 这是她 2026-09-15 实际听出来的问题:
-  // 12 拍里 8 拍是 fluent/calm,只有开头一拍外放,整条片自然显得没情绪。
-  const subdued = meta.filter((m) => m.say.emotion === "fluent" || m.say.emotion === "calm" || !m.say.emotion).length;
-  if (meta.length >= 4 && subdued / meta.length > 0.5) {
-    warn.push(`${subdued}/${meta.length} 拍是 fluent/calm(收着念),情绪太内敛,多数节拍该用 happy/surprised`);
-  }
-  if (pitchFixes.length) warn.push(`${pitchFixes.length} 处相邻音高跳变太大,已收紧:${pitchFixes.join("  ")}`);
+  const emptyClip = meta.find((m) => !m.words?.length);
+  if (emptyClip) warn.push(`${emptyClip.name} 没分到任何字,切分可能出错,建议打回重出`);
   const warnLine = warn.length ? `\n⚠ 配音自检:${warn.join(";")}` : "";
 
   const pick = ({ name, beat, text, tts, dur, gap, say, words, head }) => ({ name, beat, text, tts, dur, gap, say, words, head });
+  const sayA = delivery(profile, TAKE_BASE_SAY);
+  const sayB = delivery(profile, punchier(TAKE_BASE_SAY));
   return {
     audio: takeA.url,
     wave: takeA.waveUrl,
-    voiceMeta: { clips: meta.map(pick), gap: GAP },
+    // tag 标记这一版的每拍音频文件用的后缀(A 版不带后缀,B 版 "-b") ——
+    // ensureInputs 靠它找到磁盘上正确的文件。她在网页上切换 A/B 时,
+    // voiceMeta/voiceMetaAlt 整个对调,tag 跟着一起换,不用额外同步。
+    voiceMeta: { clips: meta.map(pick), gap: GAP, tag: "" },
     takes: {
       a: { label: "稳一点", audio: takeA.url, wave: takeA.waveUrl, total: Number(takeA.total.toFixed(1)) },
       b: { label: "冲一点", audio: takeB.url, wave: takeB.waveUrl, total: Number(takeB.total.toFixed(1)) },
       picked: "a",
     },
-    voiceMetaAlt: { clips: takeB.meta.map(pick), gap: GAP },
-    note: `音色 ${profile.voice_id} 基准 ${profile.speed}x(${TTS_MODEL})。两版都在上面,听完点"用这版"。
-A 稳一点 ${takeA.total.toFixed(1)}s / B 冲一点 ${takeB.total.toFixed(1)}s(整体快一档、亮一档、留白更短)。
-A 版每拍的念法(语速是基准的倍数,⏸ = 句中有停顿):
-${takeSummary(meta)}
-两版都不对就打回,直接点名"第3拍太平/开头再快点",下一版照着改。${warnLine}`,
+    voiceMetaAlt: { clips: takeB.meta.map(pick), gap: GAP, tag: "-b" },
+    note: `音色 ${profile.voice_id}(${TTS_MODEL})。整条片一次生成,不再分拍单独调用 ——
+MiniMax 不支持一次调用里逐句变语气,分开调用之间又没有保持音色一致的机制,
+拆开合成会漏出接缝(2026-09-15 实测最大跳变 4+ 个半音)。现在的代价是没有
+逐拍的语速/音高变化了,起伏靠停顿和句间留白撑。
+A 稳一点 @${sayA.speed.toFixed(2)}x ${sayA.emotion} ${takeA.total.toFixed(1)}s / B 冲一点 @${sayB.speed.toFixed(2)}x ${sayB.emotion} ${takeB.total.toFixed(1)}s。
+两版都不对就打回,说清楚是"整体太平"还是"某几拍断句不对"。${warnLine}`,
   };
 }
 
@@ -570,13 +598,18 @@ async function ensureInputs(item) {
       visuals.push({ kind: "image", path: p });
     }
   }
+  // voiceMeta.tag 标出这一版用的文件后缀(A 版 "",B 版 "-b")—— 整段一次合成之后,
+  // 每拍的音频已经从同一次生成里切好了,只需要按 tag 找到对应文件,不用重新调 TTS。
+  // 只有文件真的不在(工作目录被清过这种极端情况)才退回单独合成一拍兜底,
+  // 兜底出来的这一拍音色会和其它拍略有差异(独立调用没有连续性保证),但好过整段崩掉。
+  const tag = up.voice?.voiceMeta?.tag ?? "";
   const voices = [];
   for (const m of meta || []) {
-    const p = join(voiceDir, `${m.name}.mp3`);
-    // m 来自 voiceMeta,带着当时的 tts 文本和念法 —— 重新生成必须用同一套,
-    // 不然补出来的那一拍念法和其他拍对不上。不能因为"文件已存在"就跳过:
-    // 她选了另一版念法时文件名没变、参数变了,靠 voiceClip 里的指纹比对重合成。
-    await voiceClip(item, { ...m, say: sayToInput(m.say) }, voiceDir);
+    const p = join(voiceDir, `${m.name}${tag}.mp3`);
+    if (!existsSync(p)) {
+      console.log(`  [edit] ${m.name}${tag} 的配音文件丢了,单独补一拍兜底(音色可能和其它拍有细微差异)`);
+      await voiceClip(item, { ...m, say: sayToInput(m.say) }, voiceDir, tag);
+    }
     voices.push(p);
   }
   return { visuals, voices, meta };
