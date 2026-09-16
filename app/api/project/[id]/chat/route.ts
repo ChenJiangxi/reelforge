@@ -32,12 +32,25 @@ const KIND_RULES: [RegExp, string][] = [
 ];
 
 function normalizeKind(kind: unknown, note: unknown): string | null {
-  const hay = `${note ?? ""} ${kind ?? ""}`;
-  for (const [re, target] of KIND_RULES) {
-    if (re.test(hay)) return target;
-  }
+  // 解析器给出的 kind 优先。以前这里先拿"批注全文 + kind"去撞关键词表,
+  // 第一条命中的就算数 —— 于是一句"素材重出,台词和配音保持不变"里的「配音」
+  // 撞上 voice 规则(它排在 footage 前面),整个重出跑到配音上去了
+  // (2026-09-16 实际发生过)。批注里提到某个阶段,常常正是为了说"别动它"。
   const k = String(kind ?? "").toLowerCase();
-  return (STAGE_ORDER as readonly string[]).includes(k) ? k : null;
+  if ((STAGE_ORDER as readonly string[]).includes(k)) return k;
+  for (const [re, target] of KIND_RULES) {
+    if (re.test(k)) return target;
+  }
+  // kind 完全看不懂才退回批注全文,而且只在没有否定词的时候
+  const note0 = String(note ?? "");
+  for (const [re, target] of KIND_RULES) {
+    const m = re.exec(note0);
+    if (!m) continue;
+    const around = note0.slice(Math.max(0, m.index - 8), m.index + m[0].length + 8);
+    if (/不要|别|不用|保持|不动|不改/.test(around)) continue; // 提到它是为了说"别动它"
+    return target;
+  }
+  return null;
 }
 
 // POST /api/project/[id]/chat { text } — the 对话剪辑 endpoint.
