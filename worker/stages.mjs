@@ -6,7 +6,7 @@ import { chatJSON, reviewImage, reviewFrames } from "./llm.mjs";
 import { PROMPTS } from "./prompts.mjs";
 import { renderCard, renderCardVideo, renderSubLine, sizeFor, closeBrowser } from "./cards.mjs";
 import { ffmpeg, ffprobeDur, ffprobeInfo, ffmpegOut } from "./ffmpeg.mjs";
-import { upload, download } from "./board.mjs";
+import { upload, downloadCached } from "./board.mjs";
 
 const WORK_ROOT = process.env.WORK_DIR || join(process.cwd(), "data", "work");
 const GAP = 0.18; // 两拍之间的留白(秒)。原来 0.25,叠上 TTS 自带的空白就太长了
@@ -278,8 +278,7 @@ async function footage(item) {
       let posterUrl = asset.url;
       if (asset.kind === "video") {
         // poster frame so the cards grid / timeline has something to show
-        const local = join(workDir(item, "assets"), asset.name);
-        if (!existsSync(local)) await download(asset.url, local);
+        const local = await downloadCached(asset.url, join(workDir(item, "assets"), asset.name));
         const poster = join(dir, `${clip.name}-poster.png`);
         const pInfo = await ffprobeInfo(local);
         const pvs = (pInfo.streams || []).find((st) => st.codec_type === "video") || {};
@@ -586,18 +585,15 @@ async function ensureInputs(item) {
   for (let i = 0; i < cardsMeta.length; i++) {
     const cm = cardsMeta[i];
     if (cm.anim) {
-      const p = join(cardsDir, `${cm.name}.webm`);
-      if (!existsSync(p)) await download(cm.anim, p);
+      const p = await downloadCached(cm.anim, join(cardsDir, `${cm.name}.webm`));
       visuals.push({ kind: "anim", path: p });
     } else if (cm.asset) {
       const asset = assets.find((a) => a.name === cm.asset);
       if (!asset) throw new Error(`素材 ${cm.asset} 不在项目素材库`);
-      const p = join(assetsDir, cm.asset);
-      if (!existsSync(p)) await download(asset.url, p);
+      const p = await downloadCached(asset.url, join(assetsDir, cm.asset));
       visuals.push({ kind: asset.kind, path: p });
     } else {
-      const p = join(cardsDir, `${cm.name}.png`);
-      if (!existsSync(p) && images[i]) await download(images[i], p);
+      const p = images[i] ? await downloadCached(images[i], join(cardsDir, `${cm.name}.png`)) : join(cardsDir, `${cm.name}.png`);
       visuals.push({ kind: "image", path: p });
     }
   }
@@ -936,8 +932,7 @@ async function subtitles(item) {
   const size = sizeFor(item.aspect);
   const dir = workDir(item, "subs");
 
-  const local = join(dir, "edit.mp4");
-  if (!existsSync(local)) await download(editVideo, local);
+  const local = await downloadCached(editVideo, join(dir, "edit.mp4"));
 
   // One transparent PNG per ≤14-char line; time allocated by char share of the
   // clip. Burned via overlay+enable (this ffmpeg build has no libass/drawtext).
@@ -1003,8 +998,7 @@ async function polish(item) {
 
   // ── 成片自动体检(学 MuseDock visualQaService):画幅/时长/黑屏/冻结/抽帧总评 ──
   const dir = workDir(item, "polish");
-  const local = join(dir, "final.mp4");
-  if (!existsSync(local)) await download(video, local);
+  const local = await downloadCached(video, join(dir, "final.mp4"));
   const qa = { issues: [] };
   try {
     const info = await ffprobeInfo(local);

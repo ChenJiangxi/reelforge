@@ -96,6 +96,20 @@ export async function upload(projectId, absPath, name, attempt = 1) {
   }
 }
 
+// 上游产物按 URL 缓存,不按文件名。这套管线里同名覆盖是常态 —— 卡重渲、粗剪重出
+// 都写回同一个名字,URL 只有 ?v=<时间戳> 在变。只判断"文件在不在"的话,下游会默默
+// 吃一个几天前的旧文件而且毫无报错:2026-09-16 字幕阶段就是这样,在 09-13 的粗剪
+// (还带着 SAR 14:3 的坏标签和别的项目的故事板拼图)上烧了三天字幕。
+export async function downloadCached(urlPath, dest) {
+  const { createHash } = await import("node:crypto");
+  const tag = createHash("sha1").update(String(urlPath)).digest("hex").slice(0, 8);
+  const i = dest.lastIndexOf(".");
+  const real = i > dest.lastIndexOf("/") ? `${dest.slice(0, i)}-${tag}${dest.slice(i)}` : `${dest}-${tag}`;
+  const { existsSync } = await import("node:fs");
+  if (!existsSync(real)) await download(urlPath, real);
+  return real;
+}
+
 export async function download(urlPath, dest) {
   const r = await fetch(BOARD + urlPath, { headers: { authorization: `Bearer ${TOKEN}` } });
   if (!r.ok) throw new Error(`download ${urlPath} -> ${r.status}`);
