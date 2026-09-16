@@ -4,7 +4,7 @@ import path from "path";
 import { prisma } from "@/lib/db";
 import { parseChat, applyOps, type Clip, type ChatOp } from "@/lib/chat-ops";
 import { resolveStage } from "@/lib/resolve-stage";
-import { STAGE_ORDER, stageLabel } from "@/lib/stages";
+import { STAGE_ORDER, stageLabel, staleAfter } from "@/lib/stages";
 import { MEDIA_DIR } from "@/lib/media";
 
 function projectAssets(projectId: string): { name: string; kind: string }[] {
@@ -133,19 +133,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       },
     });
 
-    const resetFrom = footageDirty ? "footage" : voiceDirty ? "voice" : null;
-    if (resetFrom) {
-      const fromOrder = STAGE_ORDER.indexOf(resetFrom as (typeof STAGE_ORDER)[number]);
+    // 只重跑真受影响的:改画面不碰配音,改台词不碰已有的卡片设计。
+    // 以前这里按 STAGE_ORDER 一刀切,footage 排在 voice 前面,于是一句"重新剪辑一下"
+    // 把审过的配音也推倒重做了(2026-09-16)。
+    const dirty = [...(footageDirty ? ["footage"] : []), ...(voiceDirty ? ["voice"] : [])];
+    if (dirty.length) {
+      const redo = new Set([...dirty, ...staleAfter(...dirty)]);
       // 连 working 中的阶段也翻回 pending:submit 的竞态守卫会作废它按旧输入产出的结果
-    for (const s of project.stages) {
-        if (s.order >= fromOrder) {
+      for (const s of project.stages) {
+        if (redo.has(s.kind)) {
           // Keep old artifacts: the previous cut stays watchable while the new
           // one renders, and footage reuses unchanged card designs from them.
           await prisma.stage.update({ where: { id: s.id }, data: { status: "pending" } });
         }
       }
       await prisma.project.update({ where: { id }, data: { status: "producing" } });
-      notes.push(footageDirty ? "画面/配音/剪辑/字幕都会重出" : "配音/剪辑/字幕会重出");
+      notes.push(
+        [...redo]
+          .sort((a, b) => STAGE_ORDER.indexOf(a as (typeof STAGE_ORDER)[number]) - STAGE_ORDER.indexOf(b as (typeof STAGE_ORDER)[number]))
+          .map((k) => stageLabel(k))
+          .join("/") + "会重出",
+      );
     }
   }
 
@@ -162,9 +170,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       data: { status: "changes_requested", comments: JSON.stringify(comments) },
     });
     // downstream of a redo goes stale → re-run after it (keep artifacts: old
-    // version stays watchable while the new one renders)
+    // version stays watchable while the new one renders)。按真实依赖走,不按顺序:
+    // 重做画面不该带上配音。
+    const stale = new Set(staleAfter(kind));
     for (const s of project.stages) {
-      if (s.order > stage.order) {
+      if (stale.has(s.kind)) {
         await prisma.stage.update({ where: { id: s.id }, data: { status: "pending" } });
       }
     }

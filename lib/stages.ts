@@ -9,6 +9,28 @@ export const STAGE_ORDER = [
   "deliver",
 ] as const;
 
+// 谁真的依赖谁 —— 改了一个阶段,只有这些阶段需要重跑。
+// 配音只吃脚本,不吃画面:换素材、重剪、改运镜都不该让配音重做(Jessy 2026-09-16:
+// "我不希望这种情况是重新配音")。按 STAGE_ORDER 的顺序一刀切会把配音一起拖下水,
+// 因为 footage 排在 voice 前面 —— 那只是排列顺序,不是依赖关系。
+const STAGE_DEPENDENTS: Record<string, readonly string[]> = {
+  topic: ["script", "footage", "voice", "edit", "subtitles", "polish", "deliver"],
+  script: ["footage", "voice", "edit", "subtitles", "polish", "deliver"],
+  footage: ["edit", "subtitles", "polish", "deliver"], // 画面变了,配音不用动
+  voice: ["edit", "subtitles", "polish", "deliver"],   // 配音变了,画面不用动
+  edit: ["subtitles", "polish", "deliver"],
+  subtitles: ["polish", "deliver"],
+  polish: ["deliver"],
+  deliver: [],
+};
+
+// 某个阶段重做之后,哪些阶段的产物作废了(不含它自己)。
+export function staleAfter(...kinds: string[]): string[] {
+  const out = new Set<string>();
+  for (const k of kinds) for (const d of STAGE_DEPENDENTS[k] ?? []) out.add(d);
+  return [...out];
+}
+
 export const STAGE_LABELS: Record<string, string> = {
   topic: "选题",
   script: "脚本",
