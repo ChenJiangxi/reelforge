@@ -633,6 +633,14 @@ const CAM_MOVES = {
   driftUp: (n) => ({ z: "1.08", x: CAM_X, y: `(ih-ih/zoom)*(1-on/${n})` }),
   hold: () => ({ z: "1.015", x: CAM_X, y: CAM_Y }),
 };
+// 动画卡专用的三种:卡是满幅设计的,z 超过 1.08 就开始啃到四边的文字,
+// 所以只给很轻的推/拉,不给横摇。轮流用,相邻两拍不重样。
+const CAM_ANIM = {
+  pushSoft: (n) => ({ z: `1+0.055*on/${n}`, x: CAM_X, y: CAM_Y }),
+  pullSoft: (n) => ({ z: `1.055-0.055*on/${n}`, x: CAM_X, y: CAM_Y }),
+  pushMicro: (n) => ({ z: `1+0.03*on/${n}`, x: CAM_X, y: CAM_Y }),
+};
+const CAM_ANIM_ORDER = ["pushSoft", "pullSoft", "pushMicro"];
 // 每个节拍的候选,按优先级;取第一个和上一拍不同的
 const CAM_BY_BEAT = {
   hook: ["pushIn", "panRight"],
@@ -712,7 +720,7 @@ function fitChain(W, H, srcW, srcH) {
 // setsar=1 是关键:素材如果带着非方形像素的 SAR/DAR 元数据(实见她的一个上传素材),
 // scale+crop 完全不会清掉这个标签,原样传到成片,变成"编码 1080x1920、播放器按
 // 5040x1920 显示"——横向被拉成宽屏。
-export async function renderAssetSeg(src, out, { W, H, fps, segDur }) {
+export async function renderAssetSeg(src, out, { W, H, fps, segDur, move = null, frames = 0, still = false }) {
   const info = await ffprobeInfo(src);
   const vs = (info.streams || []).find((s) => s.codec_type === "video") || {};
   const srcDur = parseFloat(info.format?.duration) || 0;
@@ -723,7 +731,12 @@ export async function renderAssetSeg(src, out, { W, H, fps, segDur }) {
   let speed = 1;
   let hold = 0;
   let loop = false;
-  if (srcDur > 0.1 && srcDur < segDur - 0.05) {
+  if (still && srcDur > 0.1 && srcDur < segDur - 0.05) {
+    // 动画卡:入场演完就该是静止的,拉慢等于把设计好的节奏改掉,倒放更是把入场
+    // 反着播一遍。短了就冻最后一帧——反正那一帧和它之后本来就一模一样。
+    hold = segDur - srcDur;
+    notes.push(`冻最后一帧 ${hold.toFixed(1)}s`);
+  } else if (srcDur > 0.1 && srcDur < segDur - 0.05) {
     speed = Math.min(MAX_SLOWDOWN, segDur / srcDur);
     if (speed > 1.02) notes.push(`放慢 ${speed.toFixed(2)}x`);
     if (srcDur * speed < segDur - 0.05) {
@@ -745,16 +758,27 @@ export async function renderAssetSeg(src, out, { W, H, fps, segDur }) {
     }
   }
 
+  // 运镜:动画卡入场完是真静止的(shotcraft 的判例,元素落定后不许再动),
+  // 一拍十几秒全靠镜头给活气。以前这里整个跳过了,卡片动 1.5 秒之后就是张死图。
+  let cam = "";
+  if (move && frames > 0) {
+    const m = CAM_ANIM[move](frames);
+    // 1.5 倍超采样就够:只推 5%,再高只是白烧 CPU(静图那条路用 2 倍是因为它推得多)
+    cam = `scale=${evenPx(W * 1.5)}:${evenPx(H * 1.5)}:flags=bilinear,` +
+      `zoompan=z='${m.z}':x='${m.x}':y='${m.y}':d=1:s=${W}x${H}:fps=${fps},setsar=1`;
+  }
+
   const vf = [
     ...(speed > 1.02 ? [`setpts=${speed.toFixed(4)}*PTS`] : []),
     ...(hold > 0.05 ? [`tpad=stop_mode=clone:stop_duration=${hold.toFixed(3)}`] : []),
-    chain, `fps=${fps}`, "format=yuv420p",
+    chain, ...(cam ? [cam] : []), `fps=${fps}`, "format=yuv420p",
   ].join(",");
 
   await ffmpeg([
     ...(loop ? ["-stream_loop", "-1"] : []), "-i", input, "-t", segDur.toFixed(3),
     "-vf", vf, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", out,
   ]);
+  if (cam) notes.push(move);
   return notes.join(" / ");
 }
 
@@ -769,6 +793,7 @@ async function edit(item) {
   const segs = [];
   let lastMove = null;
   const cameraLog = [];
+  let animMove = 0;
   // 第 i 段要多渲一个转场的时长,给下一刀当重叠料;xfade 吃掉的正好是多出来的部分,
   // 所以成片总长仍然等于 Σ(每拍时长 + 句尾留白),音轨不用动。
   const trans = planTransitions(meta);
@@ -779,7 +804,10 @@ async function edit(item) {
     const seg = join(dir, `seg-${meta[i].name}.mp4`);
     let assetNote = "";
     if (visuals[i].kind === "video" || visuals[i].kind === "anim") {
-      assetNote = await renderAssetSeg(visuals[i].path, seg, { W, H, fps, segDur });
+      // 录屏素材不加运镜(本来就在动);动画卡加,而且相邻两拍不重样
+      const isAnim = visuals[i].kind === "anim";
+      const move = isAnim ? CAM_ANIM_ORDER[animMove++ % CAM_ANIM_ORDER.length] : null;
+      assetNote = await renderAssetSeg(visuals[i].path, seg, { W, H, fps, segDur, move, frames, still: isAnim });
     } else {
       const move = pickCamera(meta[i].beat, i, lastMove);
       lastMove = move;

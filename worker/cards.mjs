@@ -80,12 +80,21 @@ export function cardHTML(
     ? (vertical ? 300 : 220)
     : Math.max(90, Math.min(vertical ? 190 : 150, Math.round((vertical ? 900 : 1500) / Math.max(1, String(big).length) * 1.6)));
 
+  // 一个序号 → 一道数值斜坡(shotcraft: ui-entrance/value-stagger-gradient)。
+  // 头一个走得远、糊得狠,越往后越轻,于是整组读成"一道波扫过去"而不是"逐个弹出"。
+  const stagger = (i, n) => {
+    const k = n > 1 ? i / (n - 1) : 0;
+    const d = Math.round(46 - k * 32); // 位移 46px → 14px
+    const b = (8 - k * 6).toFixed(1);  // 模糊 8px → 2px
+    return `--rf-d:${d}px;--rf-b:${b}px`;
+  };
+
   let center;
   if (type === "diagram") {
     center = `
       <div class="diagram">
         ${nodes.map((n, i) => `
-          <div class="node a-node ${n.tone === "accent" ? "node-accent" : ""}" style="animation-delay:${0.15 + i * 0.28}s">
+          <div class="node a-node ${n.tone === "accent" ? "node-accent" : ""}" style="animation-delay:${0.15 + i * 0.28}s;${stagger(i, nodes.length)}">
             <div class="node-label">${esc(n.label)}</div>
             ${n.sub ? `<div class="node-sub">${esc(n.sub)}</div>` : ""}
           </div>
@@ -106,7 +115,7 @@ export function cardHTML(
       ${big ? `<div class="big" style="font-size:${Math.round(bigSize * 0.6)}px;margin-bottom:${vertical ? 48 : 36}px">${esc(big)}</div>` : ""}
       <div class="flow">
         ${steps.map((st, i) => `
-          <div class="fstep a-step" style="animation-delay:${0.15 + i * 0.25}s">
+          <div class="fstep a-step" style="animation-delay:${0.15 + i * 0.25}s;${stagger(i, steps.length)}">
             <div class="fstep-no">${i + 1}</div>
             <div class="fstep-label">${esc(st.label)}</div>
             ${st.sub ? `<div class="fstep-sub">${esc(st.sub)}</div>` : ""}
@@ -228,19 +237,32 @@ ${animate ? `
 @keyframes rf-fade-down { from { opacity:0; transform:translateY(-24px);} to {opacity:1; transform:none;} }
 @keyframes rf-pop { 0% {opacity:0; transform:scale(.86);} 55% {opacity:1; transform:scale(1.05);} 100% {opacity:1; transform:scale(1);} }
 @keyframes rf-rise { from {opacity:0; transform:translateY(30px);} to {opacity:1; transform:none;} }
+/* blur-slide(shotcraft typography/blur-slide):带景深的滑入,比纯位移"贵"很多 */
+@keyframes rf-blur-slide { from {opacity:0; transform:translateY(22px); filter:blur(14px);} to {opacity:1; transform:none; filter:blur(0);} }
+/* 数值梯度版的入场:位移和模糊都读元素自己的 --rf-d / --rf-b */
+@keyframes rf-rise-v {
+  from { opacity:0; transform:translateY(var(--rf-d,30px)); filter:blur(var(--rf-b,0px)); }
+  to   { opacity:1; transform:none; filter:blur(0); }
+}
+/* gradient-word-sweep(shotcraft typography):一道亮波从左扫过大字"充能",
+   扫完回稳态。要点是快(约 0.6s)且波前最亮——慢了就读成进度条。 */
+@keyframes rf-sweep { from { background-position: -140% 0; } to { background-position: 140% 0; } }
 @keyframes rf-draw { from {opacity:0; transform:scaleX(0);} to {opacity:1; transform:scaleX(1);} }
 @keyframes rf-slide-l { from {opacity:0; transform:translateX(-64px);} to {opacity:1; transform:none;} }
 @keyframes rf-slide-r { from {opacity:0; transform:translateX(64px);} to {opacity:1; transform:none;} }
-.a-kicker { animation: rf-fade-down .5s .1s both; }
+.a-kicker { animation: rf-blur-slide .5s .1s both; }
 .a-big { animation: rf-pop .65s .35s both; }
+/* 大字扫光:.bigText 本来就是 background-clip:text 的渐变,把背景拉宽再推一遍
+   位置,亮波就从字里走过去了(纯色主题没有渐变,这条自然不生效)。 */
+.big.a-big { background-size: 260% 100%; animation: rf-pop .65s .35s both, rf-sweep .6s 1.0s both; }
 .a-q { animation: rf-pop .5s .15s both; }
 .a-bar { animation: rf-draw .5s .95s both; transform-origin:center; }
-.a-sub { animation: rf-rise .5s 1.05s both; }
+.a-sub { animation: rf-blur-slide .62s 1.05s both; }
 .a-side-l { animation: rf-slide-l .55s .25s both; }
 .a-side-r { animation: rf-slide-r .55s .55s both; }
 .a-vs { animation: rf-pop .4s .95s both; }
-.a-node { animation: rf-pop .5s both; }
-.a-step { animation: rf-rise .45s both; }
+.a-node { animation: rf-rise-v .55s both; }
+.a-step { animation: rf-rise-v .5s both; }
 .a-edge { animation: rf-draw .4s both; transform-origin:center; }
 .ktable tbody tr { animation: rf-rise .4s both; }
 .ktable tbody tr:nth-child(1) { animation-delay:.55s } .ktable tbody tr:nth-child(2) { animation-delay:.75s }
