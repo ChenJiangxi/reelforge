@@ -138,6 +138,9 @@ export type VoiceMeta = {
   gap?: number;
 };
 
+/** 一个镜头:模板镜头 {tpl, p} 或素材镜头 {asset};from = 念到台词里这几个字切到它 */
+export type ShotData = { tpl?: string; asset?: string; from?: string; p?: Record<string, unknown> };
+
 export type Artifacts = {
   video?: string;
   audio?: string;
@@ -147,11 +150,15 @@ export type Artifacts = {
   note?: string;
   caption?: { title: string; hashtags: string[]; desc: string };
   images?: string[];
-  clips?: { name: string; text: string; visual?: string; asset?: string; overrides?: Overrides; inserts?: Insert[] }[];
+  clips?: { name: string; text: string; visual?: string; asset?: string; overrides?: Overrides; inserts?: Insert[]; shots?: ShotData[] }[];
   cards?: {
     name: string; text?: string; type?: string; kicker?: string; big?: string; sub?: string; foot?: string;
     anim?: string; asset?: string; visualRev?: number;
+    /** type = "shots":这一拍的镜头(素材阶段 AI 排的;她改过的在脚本阶段 clips[i].shots) */
+    shots?: ShotData[]; theme?: string; by?: string;
   }[];
+  /** 脚本阶段:整条片的剪辑设置 */
+  editSettings?: EditSettings;
   /** 配音的两版念法 —— 她听完点一个(见 /api/project/[id]/voice-take) */
   takes?: {
     a: { label: string; audio: string; wave?: string; total?: number };
@@ -186,7 +193,7 @@ export type Decision = {
   choice: string;
   why?: string;
   by?: "auto" | "you";
-  key?: keyof Overrides | "sfx";
+  key?: keyof Overrides | "sfx" | "theme";
   value?: string | number;
   warn?: boolean;
 };
@@ -227,7 +234,10 @@ export type Insert = {
 };
 
 /** 整条片的剪辑设置(存在脚本阶段 artifacts.editSettings) */
-export type EditSettings = { sfx?: "on" | "off" };
+export type EditSettings = { sfx?: "on" | "off"; theme?: "ink" | "paper" | "dusk" };
+
+/** 镜头配色(整条片一套) */
+export const THEME_LABELS: Record<string, string> = { ink: "深墨蓝 + 香槟金", paper: "暖纸 + 朱红", dusk: "暗紫 + 暖橙" };
 
 export const OVERRIDE_LABELS: Record<keyof Overrides, string> = {
   fit: "进画",

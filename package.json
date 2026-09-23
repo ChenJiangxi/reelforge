@@ -15,26 +15,34 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@prisma/client": "^6",
+    "@remotion/player": "4.0.527",
+    "archiver": "^7",
     "next": "16.2.10",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "@prisma/client": "^6",
-    "archiver": "^7"
+    "remotion": "4.0.527"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/archiver": "^6",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/archiver": "^6",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
-    "tailwindcss": "^4",
-    "typescript": "^5",
     "prisma": "^6",
-    "tsx": "^4"
+    "tailwindcss": "^4",
+    "tsx": "^4",
+    "typescript": "^5"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["sharp", "unrs-resolver", "@prisma/client", "prisma", "esbuild"]
+    "onlyBuiltDependencies": [
+      "sharp",
+      "unrs-resolver",
+      "@prisma/client",
+      "prisma",
+      "esbuild"
+    ]
   }
 }

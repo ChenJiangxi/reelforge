@@ -1,0 +1,14 @@
+{
+  "name": "reelforge-shots-renderer",
+  "private": true,
+  "type": "module",
+  "description": "worker 用的镜头渲染器:把 shots/ 里的模板用 Remotion 逐帧渲成视频/静帧。依赖只装在这里,不进网站。",
+  "dependencies": {
+    "@remotion/bundler": "4.0.527",
+    "@remotion/layout-utils": "4.0.527",
+    "@remotion/renderer": "4.0.527",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "remotion": "4.0.527"
+  }
+}

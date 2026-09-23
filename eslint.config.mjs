@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "worker/remotion/node_modules/**",
+    "worker/py/**",
   ]),
 ]);
 

@@ -1,0 +1,300 @@
+// 镜头规划:每拍从"一张字卡"变成 1-4 个镜头(学 ops-bilibili 的分镜:一拍里念到哪切到哪)。
+// 模板本身在 shots/(React/Remotion,网页预览和渲染机共用);这里管三件事:
+//   1. 把模板目录写进提示词,让 LLM 给每拍排镜头、填内容
+//   2. 校验它排的(切点是不是台词原文、字数、同一模板不许扎堆、数字必须真有出处)
+//   3. 规整成渲染要的结构
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { shotCountFor, spokenLen, cleanText, CHARS_PER_SEC } from "../shots/timing.mjs";
+import { TASTE, playbook } from "./prompts.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+export const CATALOG = JSON.parse(readFileSync(join(HERE, "..", "shots", "catalog.json"), "utf8")).templates;
+export const TPL = Object.fromEntries(CATALOG.map((t) => [t.id, t]));
+export const TPL_LABEL = Object.fromEntries(CATALOG.map((t) => [t.id, t.label]));
+const DATA_TPL = new Set(["number", "gauge", "bars", "timeline", "evidence", "pillars"]);
+export const SHOT_THEMES = ["ink", "paper", "dusk"];
+const len = (s) => [...String(s ?? "")].length;
+const brief = (s, n = 16) => (len(s) > n ? `${[...String(s)].slice(0, n).join("")}…` : String(s ?? ""));
+
+function fieldDoc(f) {
+  const opt = f.optional ? ",可省" : "";
+  if (f.type === "text") return `"${f.key}": 字符串(≤${f.max} 字${opt}) —— ${f.label}`;
+  if (f.type === "number") return `"${f.key}": 数字${opt} —— ${f.label}`;
+  if (f.type === "select") return `"${f.key}": ${f.options.map((o) => `"${o}"`).join("|")}${opt} —— ${f.label}`;
+  if (f.type === "list") return `"${f.key}": [字符串 ${f.min}-${f.max} 个,每个 ≤${f.itemMax} 字]${opt} —— ${f.label}`;
+  if (f.type === "items") return `"${f.key}": [{${f.of.map((x) => `"${x.key}"${x.optional ? "?" : ""}: ${x.type === "number" ? "数字" : `≤${x.max}字`}`).join(", ")}} ${f.min}-${f.max} 个] —— ${f.label}`;
+  if (f.type === "side") return `"${f.key}": {"title": ≤6字, "lines": [≤10字 × 1-3]} —— ${f.label}`;
+  if (f.type === "rows") return `"${f.key}": [[每格 ≤${f.itemMax} 字]] ${f.min}-${f.max} 行 —— ${f.label}`;
+  return `"${f.key}"`;
+}
+
+export function catalogText() {
+  return CATALOG.map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).join(";")}\n   例:${JSON.stringify(t.example)}`).join("\n");
+}
+
+/** 这拍大概念多久(秒) */
+export const estDur = (text) => spokenLen(text) / CHARS_PER_SEC;
+
+// ── 校验 ─────────────────────────────────────────────────────────────
+
+function fieldIssues(f, v, at) {
+  const out = [];
+  const miss = v == null || (typeof v === "string" && !v.trim()) || (Array.isArray(v) && !v.length);
+  if (miss) {
+    if (!f.optional && !(f.min === 0)) out.push(`${at} 缺 ${f.key}(${f.label})`);
+    return out;
+  }
+  if (f.type === "text" && len(v) > f.max) out.push(`${at} 的 ${f.key}「${brief(v)}」${len(v)} 字,最多 ${f.max} 字 —— 删字,别写成整句台词`);
+  if (f.type === "number" && !Number.isFinite(Number(v))) out.push(`${at} 的 ${f.key} 要是数字,现在是「${brief(v)}」`);
+  if (f.type === "select" && !f.options.includes(v)) out.push(`${at} 的 ${f.key} 只能是 ${f.options.join("|")}`);
+  if (f.type === "list") {
+    if (!Array.isArray(v)) out.push(`${at} 的 ${f.key} 要是字符串数组`);
+    else {
+      if (v.length < f.min || v.length > f.max) out.push(`${at} 的 ${f.key} 要 ${f.min}-${f.max} 个,现在 ${v.length} 个`);
+      v.forEach((x, k) => {
+        if (len(x) > f.itemMax) out.push(`${at} 的 ${f.key}[${k}]「${brief(x)}」超过 ${f.itemMax} 字`);
+      });
+    }
+  }
+  if (f.type === "items") {
+    if (!Array.isArray(v)) out.push(`${at} 的 ${f.key} 要是对象数组`);
+    else {
+      if (v.length < f.min || v.length > f.max) out.push(`${at} 的 ${f.key} 要 ${f.min}-${f.max} 个,现在 ${v.length} 个`);
+      v.forEach((x, k) => {
+        for (const sub of f.of) out.push(...fieldIssues(sub, x?.[sub.key], `${at} 的 ${f.key}[${k}]`));
+      });
+    }
+  }
+  if (f.type === "side") {
+    if (!v?.title) out.push(`${at} 的 ${f.key} 缺 title`);
+    else if (len(v.title) > 6) out.push(`${at} 的 ${f.key}.title「${brief(v.title)}」超过 6 字`);
+    for (const [k, l] of (v?.lines || []).entries()) if (len(l) > 10) out.push(`${at} 的 ${f.key}.lines[${k}]「${brief(l)}」超过 10 字`);
+  }
+  if (f.type === "rows") {
+    if (!Array.isArray(v) || !v.every(Array.isArray)) out.push(`${at} 的 ${f.key} 要是二维数组`);
+    else if (v.length < f.min || v.length > f.max) out.push(`${at} 的 ${f.key} 要 ${f.min}-${f.max} 行`);
+  }
+  return out;
+}
+
+/** 数据类镜头里的数字/干支必须在台词或参考材料里真有 —— 不许编 */
+function dataIssues(s, at, source) {
+  const out = [];
+  if (!DATA_TPL.has(s.tpl)) return out;
+  const nums = [];
+  const p = s.p || {};
+  const push = (x) => {
+    const m = String(x ?? "").match(/\d+(?:\.\d+)?/g);
+    if (m) nums.push(...m);
+  };
+  if (s.tpl === "number" || s.tpl === "gauge") push(p.value);
+  if (s.tpl === "bars") (p.items || []).forEach((x) => push(x?.value));
+  if (s.tpl === "timeline") (p.points || []).forEach((x) => push(x?.value));
+  if (s.tpl === "evidence") push(p.score);
+  const missing = [...new Set(nums)].filter((n) => !source.includes(n) && !source.includes(toChineseNum(n)));
+  if (missing.length) out.push(`${at} 用了台词和参考材料里都没有的数字 ${missing.slice(0, 4).join("、")} —— 不许编数据;没有真数字就换成非数据类模板`);
+  if (s.tpl === "pillars") {
+    const gz = (p.cols || []).flatMap((c) => [c?.top, c?.bottom]).filter(Boolean);
+    const bad = gz.filter((g) => !source.includes(g));
+    if (bad.length > 1) out.push(`${at} 的四柱干支(${bad.slice(0, 4).join("")})在台词和参考材料里没出现 —— 没有具体八字就别用 pillars`);
+  }
+  return out;
+}
+
+const CN = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+function toChineseNum(n) {
+  // 口播里常念成汉字:"二零三二年""八十九分"—— 逐位的写法够用来判断"台词里有没有提到"
+  return [...String(n)].map((d) => CN[Number(d)] ?? d).join("");
+}
+
+export function shotIssues(s, at, text, source) {
+  if (!s || typeof s !== "object") return [`${at} 不是对象`];
+  const out = [];
+  if (s.asset) return out;
+  const t = TPL[s.tpl];
+  if (!t) return [`${at} 的 tpl「${s.tpl}」不存在,只能是 ${CATALOG.map((x) => x.id).join("|")} 之一(或者写 asset 用素材库)`];
+  if (!s.p || typeof s.p !== "object") return [`${at} 缺 p(镜头内容)`];
+  for (const f of t.fields) out.push(...fieldIssues(f, s.p[f.key], at));
+  if (s.tpl === "quote" && s.p.em && !String(s.p.text || "").includes(s.p.em)) out.push(`${at} 的 em「${s.p.em}」必须是 text 里的原文`);
+  if (s.tpl === "diagram" && Array.isArray(s.p.links) && Array.isArray(s.p.nodes) && s.p.links.length > Math.max(0, s.p.nodes.length - 1)) out.push(`${at} 的 links 要比 nodes 少一个`);
+  if (s.tpl === "table" && Array.isArray(s.p.rows) && Array.isArray(s.p.cols)) {
+    const bad = s.p.rows.findIndex((r) => Array.isArray(r) && r.length !== s.p.cols.length);
+    if (bad >= 0) out.push(`${at} 的 rows[${bad}] 格数和列头(${s.p.cols.length} 列)不一样`);
+  }
+  out.push(...dataIssues(s, at, source));
+  // 屏幕上的字不是字幕:整句照抄台词没有意义(字幕已经有了)
+  const onScreen = JSON.stringify(s.p);
+  const longCopy = cleanText(text).length >= 16 && cleanText(onScreen).includes(cleanText(text).slice(0, 14));
+  if (longCopy) out.push(`${at} 把整句台词照抄上了屏幕 —— 字幕已经有这句,画面上只放关键词、术语、数字`);
+  return out;
+}
+
+/**
+ * 整片镜头规划的校验器(交给 chatJSON 做一次定向补正)。
+ * want: [{name, text}] 这次要规划的拍;fixed: 不用它规划的拍(沿用/她改过的)按顺序带上,用来查相邻重复
+ */
+/** 汉字两两相连的片段(去标点),用来粗比"这段字像哪一拍的台词" */
+function bigrams(s) {
+  const t = [...cleanText(s)].filter((ch) => /\p{Script=Han}/u.test(ch));
+  const out = new Set();
+  for (let i = 0; i + 1 < t.length; i++) out.add(t[i] + t[i + 1]);
+  return out;
+}
+
+export function validatePlan(want, fixedByName, source, assetNames = [], allOrder = null, fixedText = null) {
+  const order = want.map((w) => w.name);
+  return (obj) => {
+    const out = [];
+    if (!obj || !Array.isArray(obj.beats)) return ['要返回 {"theme": "...", "beats": [{"name": "c01", "shots": [...]}]}'];
+    if (obj.theme && !SHOT_THEMES.includes(obj.theme)) out.push(`theme 只能是 ${SHOT_THEMES.join("|")}`);
+    const byName = new Map(obj.beats.map((b) => [b?.name, b]));
+    const missing = order.filter((n) => !byName.has(n));
+    if (missing.length) out.push(`缺了 ${missing.join("、")} 的镜头`);
+    for (const w of want) {
+      const b = byName.get(w.name);
+      if (!b) continue;
+      const shots = Array.isArray(b.shots) ? b.shots : [];
+      const at0 = `${w.name}`;
+      const need = shotCountFor(w.text);
+      if (!shots.length) {
+        out.push(`${at0} 没有镜头`);
+        continue;
+      }
+      if (shots.length > 4) out.push(`${at0} 有 ${shots.length} 个镜头,最多 4 个`);
+      if (Math.abs(shots.length - need) >= 2) out.push(`${at0} 约 ${estDur(w.text).toFixed(1)} 秒,该切 ${need} 个镜头左右,现在 ${shots.length} 个`);
+      let pos = -1;
+      shots.forEach((s, k) => {
+        const at = `${w.name} 第 ${k + 1} 个镜头`;
+        out.push(...shotIssues(s, at, w.text, source));
+        if (s?.asset && !assetNames.includes(s.asset)) out.push(`${at} 的素材「${s.asset}」不在素材库里`);
+        if (k > 0) {
+          const from = String(s?.from ?? "");
+          const i = from ? cleanText(w.text).indexOf(cleanText(from)) : -1;
+          if (!from || cleanText(from).length < 2) out.push(`${at} 缺 from(从台词里抄 3-8 个字,念到这里切到这个镜头)`);
+          else if (i < 0) out.push(`${at} 的 from「${brief(from)}」不是台词原文 —— 必须从这拍台词里一字不差地抄`);
+          else if (i <= pos) out.push(`${at} 的 from「${brief(from)}」在上一个镜头切点的前面,切点要按台词顺序`);
+          else pos = i;
+        }
+      });
+    }
+    // 串拍:镜头上的字明显是相邻那拍的台词(画面会比声音早/晚一拍,2026-09-23 c02 放了 c03 的「女命看官杀」)
+    const textOf = new Map((allOrder || order).map((n) => [n, (want.find((w) => w.name === n)?.text ?? fixedText?.get(n) ?? "")]));
+    const names0 = allOrder || order;
+    for (const w of want) {
+      const b = byName.get(w.name);
+      const idx = names0.indexOf(w.name);
+      const own = bigrams(w.text);
+      for (const [k, s] of (b?.shots || []).entries()) {
+        if (!s?.tpl || !s.p) continue;
+        const mine = bigrams(JSON.stringify(s.p));
+        const score = (set) => [...mine].filter((g) => set.has(g)).length;
+        const o = score(own);
+        for (const nb of [names0[idx - 1], names0[idx + 1]]) {
+          if (!nb) continue;
+          const sc = score(bigrams(textOf.get(nb) || ""));
+          if (sc >= 3 && sc > o * 2) out.push(`${w.name} 第 ${k + 1} 个镜头上的字讲的是 ${nb} 的内容(和 ${nb} 的台词重合 ${sc} 处,和本拍只有 ${o} 处)—— 画面会和声音差一拍,只放这拍自己念到的内容`);
+        }
+      }
+    }
+    // 全片:相邻镜头不许同一模板,单个模板不许扎堆
+    const seq = [];
+    const names = allOrder || [...new Set([...order, ...fixedByName.keys()])];
+    for (const n of names) {
+      const shots = byName.get(n)?.shots || fixedByName.get(n) || [];
+      for (const s of shots) seq.push({ beat: n, tpl: s?.asset ? "asset" : s?.tpl, fixed: !byName.has(n) });
+    }
+    for (let i = 1; i < seq.length; i++) {
+      if (seq[i].tpl === seq[i - 1].tpl && seq[i].tpl !== "asset" && !(seq[i].fixed && seq[i - 1].fixed)) out.push(`${seq[i - 1].beat} 和 ${seq[i].beat} 交界处连着两个 ${seq[i].tpl} —— 相邻镜头换个模板`);
+    }
+    const cards = seq.filter((x) => x.tpl && x.tpl !== "asset");
+    if (cards.length >= 8) {
+      const count = {};
+      for (const c of cards) count[c.tpl] = (count[c.tpl] || 0) + 1;
+      for (const [tpl, c] of Object.entries(count)) if (c / cards.length > 0.3) out.push(`${tpl} 用了 ${c}/${cards.length} 次,超过三成 —— 整条片会像同一个画面的变体,换几个成别的模板`);
+      const CAP = { stomp: 2, quote: 3, ask: 3, glyph: 4 };
+      for (const [tpl, cap] of Object.entries(CAP)) if ((count[tpl] || 0) > cap) out.push(`${tpl} 用了 ${count[tpl]} 次,全片最多 ${cap} 次 —— 多出来的换成别的模板`);
+    }
+    return out;
+  };
+}
+
+/** 规整:去掉多余字段、第一个镜头不要 from、数字字段转数字 */
+export function normalizeShots(shots) {
+  return (shots || []).slice(0, 4).map((s, k) => {
+    if (s?.asset) return { asset: String(s.asset), from: k ? String(s.from ?? "") : "" };
+    const t = TPL[s?.tpl] ? s.tpl : "lines";
+    const p = { ...(s?.p || {}) };
+    for (const f of TPL[t].fields) {
+      if (f.type === "number" && p[f.key] != null && Number.isFinite(Number(p[f.key]))) p[f.key] = Number(p[f.key]);
+      if (f.type === "items") p[f.key] = (p[f.key] || []).map((x) => {
+        const o = { ...x };
+        for (const sub of f.of) if (sub.type === "number" && o[sub.key] != null && Number.isFinite(Number(o[sub.key]))) o[sub.key] = Number(o[sub.key]);
+        return o;
+      });
+    }
+    return { tpl: t, from: k ? String(s.from ?? "") : "", p };
+  });
+}
+
+/** 决定清单里一拍的镜头写成一行:「砸字 → 左右对照(念到"女命看"切) → …」 */
+export function describeShots(shots) {
+  return shots.map((s, k) => `${s.asset ? `录屏「${brief(s.asset, 10)}」` : TPL_LABEL[s.tpl] ?? s.tpl}${k && s.from ? `(念到「${brief(s.from, 6)}」切)` : ""}`).join(" → ");
+}
+
+// ── 提示词 ───────────────────────────────────────────────────────────
+
+/**
+ * 整片一次规划(看得到全片才管得住"别扎堆")。
+ * want: 要规划的拍 [{name, beat, text, visual}];fixed: 不用规划的拍 [{name, text, shots}](沿用的/她改过的)
+ */
+export function planPrompt(item, want, fixed, { assets = [], material = "", note = "", theme = null } = {}) {
+  const vids = assets.filter((a) => a.kind === "video" || a.kind === "image");
+  const assetBlock = vids.length
+    ? `\n\n素材库(真录屏/真截图,能用就用 —— 讲到产品功能时,真素材永远比动画卡有说服力):\n${vids.map((a) => `- "${a.name}"(${a.kind === "video" ? "录屏" : "图片"}${a.global ? ",共享" : ""}${a.tone ? `,${a.tone === "dark" ? "深色画面" : "浅色画面"}` : ""})`).join("\n")}\n用法:镜头写成 {"asset": "文件名", "from": "切点"}。一拍最多一个素材镜头,别把素材放在不相关的拍上。`
+    : "";
+  const all = [...want.map((w) => ({ ...w, todo: true })), ...fixed.map((f) => ({ ...f, todo: false }))];
+  all.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const beats = all
+    .map((b) =>
+      b.todo
+        ? `${b.name}[${b.beat || "?"}] 约 ${estDur(b.text).toFixed(1)} 秒 → 切 ${shotCountFor(b.text)} 个镜头\n  台词:${b.text}${b.visual ? `\n  画面简报:${b.visual}` : ""}`
+        : `${b.name}(已定,不用出):${describeShots(b.shots || [])}`,
+    )
+    .join("\n");
+  return [
+    {
+      role: "system",
+      content: `你是短视频动态分镜师。口播已经定稿,你要给每一拍排镜头:一拍切成 1-4 个镜头,念到哪句切到哪个镜头,每个镜头从模板库里选一个动效模板、填上画面内容。
+目标是 ops-bilibili 那种成片:两三秒就有一次画面变化,每个画面都有信息(关系、对照、数字、术语),字大、撑满画面,不是一张张 PPT。
+
+${TASTE}
+
+模板库(tpl 只能从这里选):
+${catalogText()}
+
+硬规矩:
+1. 切点 from:每拍第一个镜头不写 from;后面每个镜头的 from 必须从这拍台词里一字不差地抄 3-8 个字,念到这几个字就切过来,按台词顺序往后排。
+2. 屏幕上的字不是字幕:字幕已经会把台词逐句打出来,画面只放提炼过的关键词、术语、关系、数字。一个字段里整句照抄台词 = 不合格。
+3. 不重样:相邻两个镜头(包括上一拍的最后一个和这一拍的第一个)不许用同一个模板;任何一个模板不许超过全片镜头的三成;stomp 全片最多 2 次。
+4. 不编数据:number/gauge/bars/timeline/evidence 里的数字、pillars 里的干支,必须是台词或参考材料里真有的。没有真数字,就用 lines/glyph/diagram/compare/list 这类非数据模板。
+5. 开头:第一拍的第一个镜头用 stomp / ask / glyph / number 之一,而且 2.5 秒内要切到下一个镜头。
+6. 每个镜头只讲一件事。塞不下就拆成两个镜头,别往一个模板里硬塞。
+7. 用台词里的具体词,不要自己总结的空词:"错误期待 / 真正价值 / 授人以渔 / 信息不对等 / 结尾落点"这种标签一律不要;标题、对照两边的名字直接用台词里的说法(星座合盘 vs 八字命盘、找老师傅 vs 自己排盘)。
+8. glyph 的大字必须是这拍讲的术语或关键字本身(官、杀、伤、合、冲、偏),不是随手挑一个字;quote 只给真正能截图传播的金句,全片最多 3 次,by 只写真实出处(人名/书名),通常不写;stomp 最多 2 次,ask 最多 3 次,glyph 最多 4 次。
+9. 片子里有素材镜头时,配色跟素材的明暗走(深色录屏配 ink,浅色配 paper),不然画面会在亮和暗之间来回跳。theme 选一套配色贯穿全片:ink(深墨蓝 + 香槟金,默认、严肃/揭秘/命理)、paper(暖纸 + 朱红,温暖/情感/生活)、dusk(暗紫 + 暖橙,活泼)。${theme ? `这条片之前用的是 ${theme},没有理由就别换。` : ""}
+
+她的画面教案(原来是写给单张字卡的;卡型名以上面的模板库为准,原则照样适用):
+${playbook("visual")}${assetBlock}`,
+    },
+    {
+      role: "user",
+      content: `${material ? `参考材料(数字、术语只能从这里和台词里取):\n${String(material).slice(0, 3000)}\n\n` : ""}${note ? `她的批注(必须照办):${note}\n\n` : ""}逐拍:
+${beats}
+
+返回 JSON(不要多余文字),只返回标了"切 N 个镜头"的那些拍:
+{"theme": "ink|paper|dusk", "beats": [{"name": "c01", "shots": [{"tpl": "stomp", "p": {...}}, {"tpl": "compare", "from": "女命看", "p": {...}}, {"asset": "文件名", "from": "打开灵伴"}]}]}`,
+    },
+  ];
+}

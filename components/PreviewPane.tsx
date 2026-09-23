@@ -9,6 +9,7 @@ import { CallLog } from "@/components/CallLog";
 import { useStatus } from "@/components/useStatus";
 import { Timeline, type TlBeat, type TlInsert } from "@/components/Timeline";
 import { VersionButton, VersionView } from "@/components/Versions";
+import { ShotBoard, type ShotBeat } from "@/components/ShotBoard";
 
 export type ClipThumb = {
   name: string;
@@ -245,6 +246,7 @@ export function PreviewPane({
             stage={view}
             stages={stages}
             vertical={vertical}
+            aspect={aspect}
             clips={clips}
             audio={audio}
             wave={wave}
@@ -343,10 +345,12 @@ function StageArtifact({
   onSelect,
   decisionPanel,
   onActiveBeat,
+  aspect = "9:16",
 }: {
   stage: StageView;
   stages: StageView[];
   vertical: boolean;
+  aspect?: string;
   clips: ClipThumb[];
   audio?: string;
   wave?: string;
@@ -358,7 +362,8 @@ function StageArtifact({
   onActiveBeat: (beat: string | null) => void;
 }) {
   const a = stage.artifacts;
-  const pass = { stages, vertical, clips, audio, wave, projectId, dropProps, over, onSelect, decisionPanel, onActiveBeat };
+  const pass = { stages, vertical, aspect, clips, audio, wave, projectId, dropProps, over, onSelect, decisionPanel, onActiveBeat };
+  const board = shotBoardData(stages);
 
   if (stage.status === "pending" && !stage.artifacts.video && !stage.artifacts.images?.length && !stage.artifacts.script && !stage.artifacts.note) {
     return (
@@ -411,21 +416,26 @@ function StageArtifact({
     );
   } else if (stage.kind === "script") {
     body = <ScriptEditor stage={stage} projectId={projectId} />;
+  } else if (stage.kind === "footage" && board) {
+    body = <ShotBoard projectId={projectId} aspect={aspect} {...board} />;
   } else if (stage.kind === "footage" && a.images?.length) {
     body = <CardStrip images={a.images} cards={a.cards ?? []} onIndex={(i) => onActiveBeat(a.cards?.[i]?.name ?? null)} />;
   } else if (stage.kind === "voice") {
     body = <VoiceTakes stage={stage} projectId={projectId} fallback={{ audio, wave }} onSelect={onSelect} />;
   } else if (a.video) {
     body = (
-      <VideoWithBeatRail
-        stage={stage}
-        vertical={vertical}
-        clips={clips}
-        dropProps={dropProps}
-        over={over}
-        decisionPanel={decisionPanel}
-        onActiveBeat={onActiveBeat}
-      />
+      <>
+        <VideoWithBeatRail
+          stage={stage}
+          vertical={vertical}
+          clips={clips}
+          dropProps={dropProps}
+          over={over}
+          decisionPanel={decisionPanel}
+          onActiveBeat={onActiveBeat}
+        />
+        {stage.kind === "edit" && board && <EditShots projectId={projectId} aspect={aspect} board={board} />}
+      </>
     );
   } else if (stage.kind === "deliver") {
     body = (
@@ -455,6 +465,39 @@ function StageArtifact({
       )}
       {commentsBlock}
     </>
+  );
+}
+
+// 分镜板的数据:素材阶段 AI 排的镜头 + 脚本阶段她改过的(她的优先)。老项目(一拍一张字卡)返回 null
+function shotBoardData(stages: StageView[]): { beats: ShotBeat[]; theme: string; themeMine: boolean } | null {
+  const footage = stages.find((s) => s.kind === "footage")?.artifacts;
+  const script = stages.find((s) => s.kind === "script")?.artifacts;
+  const cards = footage?.cards ?? [];
+  if (!cards.length || !cards.some((c) => c.type === "shots")) return null;
+  const clips = script?.clips ?? [];
+  const beats: ShotBeat[] = cards.map((c, i) => {
+    const sc = clips.find((x) => x.name === c.name);
+    const mine = !!sc?.shots?.length;
+    return { name: c.name, text: sc?.text ?? c.text ?? "", image: footage?.images?.[i], shots: (mine ? sc!.shots! : c.shots) ?? [], mine };
+  });
+  const themeMine = !!script?.editSettings?.theme;
+  return { beats, theme: script?.editSettings?.theme ?? cards.find((c) => c.theme)?.theme ?? "ink", themeMine };
+}
+
+// 剪辑阶段看成片时也能直接改镜头(不用回到素材那一步)
+function EditShots({ projectId, aspect, board }: { projectId: string; aspect: string; board: NonNullable<ReturnType<typeof shotBoardData>> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mx-auto mt-3 w-full max-w-5xl">
+      <button onClick={() => setOpen((o) => !o)} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-foreground/30 hover:text-foreground">
+        {open ? "收起分镜" : "改镜头(分镜板)"}
+      </button>
+      {open && (
+        <div className="mt-2 h-[70vh] rounded-md border border-border p-2">
+          <ShotBoard projectId={projectId} aspect={aspect} {...board} />
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -50,6 +50,20 @@
 
 worker 机器上第一次要跑 `worker/py/setup.sh`(Python 环境、从系统字体包抽手写体、下载音效;都不进仓库)。
 
+## 镜头(09-23 晚,对标 ops-bilibili 的分镜)
+
+原来每拍是一张 LLM 挑版式的字卡。现在每拍按时长切 1-4 个动态镜头,念到哪句切到哪个镜头:
+
+- 模板在 `shots/`(React + Remotion,15 个:砸字、推进问句、逐句落、金句、大单字、大数字、圆环分数、柱状图、
+  时间线、逐条清单、结论+依据、左右对照、关系链、四柱、对照表),字段说明在 `shots/catalog.json`。
+  网页预览(`@remotion/player`)和渲染机(`@remotion/renderer`)用同一份代码,网页上看到什么成片就是什么。
+- 素材阶段(`worker/footage-shots.mjs`)让 LLM 整片一次排镜头,校验切点是台词原文、字数、模板不扎堆、
+  数字要有出处、镜头内容不串拍;剪辑阶段按配音逐字时间戳定切点和镜头里每一项出现的时刻(`shots/timing.mjs`)。
+- 网页分镜板(`components/ShotBoard.tsx`):点一拍实时播放,直接改字、换模板、调切点、「换一个」、加减镜头。
+  改过的存在脚本阶段 `clips[i].shots`,只重跑剪辑,素材阶段重跑也不覆盖。
+- worker 机器第一次要跑 `worker/remotion/setup.sh`(约 180MB 依赖,第一次渲染会自动下载 90MB 的 Chrome)。
+  没装的话素材阶段自动退回老字卡;`SHOTS=off` 也能强制退回。
+
 ## 架构
 
 | 部分 | 在哪 | 做什么 |

@@ -14,6 +14,10 @@ import { drawCard, drawReady, DRAWABLE } from "./draw.mjs";
 import { detectRegions, planFocus, focusZoompan } from "./focus.mjs";
 import { planSfx, renderSfxTrack, sfxReady } from "./sfx.mjs";
 import { validateScript, validateDelivery, validateCard, validateTopic, validateCover, validateCaption, repairDecisions } from "./validate.mjs";
+import { footageShots } from "./footage-shots.mjs";
+import { shotsReady, shotsVersion, renderBeat } from "./remotion/render.mjs";
+import { timeShots, spokenIndex as shotIndex } from "../shots/timing.mjs";
+import { TPL_LABEL, normalizeShots } from "./shots.mjs";
 
 export const WORK_ROOT = process.env.WORK_DIR || join(process.cwd(), "data", "work");
 const GAP = 0.18; // 两拍之间的留白(秒)。原来 0.25,叠上 TTS 自带的空白就太长了
@@ -435,6 +439,13 @@ async function script(item) {
 }
 
 async function footage(item) {
+  // 新做法:每拍 1-4 个动态镜头(worker/footage-shots.mjs)。渲染机没装镜头渲染器
+  // (worker/remotion 下没跑过 npm install)或者显式关掉(SHOTS=off)才退回老字卡。
+  if (process.env.SHOTS !== "off" && shotsReady()) return footageShots(item, { mark, workDir, sizeFor, stamp });
+  return footageCards(item);
+}
+
+async function footageCards(item) {
   const clips = item.upstream?.script?.clips;
   if (!clips?.length) throw new Error("上游脚本没有 clips");
   const dir = workDir(item, "cards");
@@ -905,7 +916,19 @@ async function ensureInputs(item) {
     const sc = scriptClips.find((c) => c.name === cm.name);
     const overrides = sc?.overrides || {};
     const inserts = Array.isArray(sc?.inserts) ? sc.inserts : [];
-    if (cm.anim) {
+    if (cm.shots) {
+      // 她在网页上改过的镜头(脚本阶段 clips[i].shots)优先,不用等素材阶段重跑
+      const shots = normalizeShots(sc?.shots?.length ? sc.shots : cm.shots);
+      const assetPaths = {};
+      for (const s of shots) {
+        if (!s.asset || assetPaths[s.asset]) continue;
+        const asset = assets.find((a) => a.name === s.asset);
+        if (!asset) throw new Error(`${cm.name} 的镜头用了素材「${s.asset}」,素材库里没有了(可能被删了)`);
+        assetPaths[s.asset] = { path: await downloadCached(asset.url, join(assetsDir, s.asset)), kind: asset.kind };
+      }
+      const theme = up.script?.editSettings?.theme || cm.theme || "ink";
+      visuals.push({ kind: "shots", source: "shots", shots, theme, assetPaths, by: sc?.shots?.length ? "you" : "auto", overrides, inserts });
+    } else if (cm.anim) {
       const p = await downloadCached(cm.anim, join(cardsDir, `${cm.name}.webm`));
       visuals.push({ kind: "anim", source: "anim", path: p, overrides, inserts });
     } else if (cm.asset) {
@@ -1231,6 +1254,85 @@ async function prepInsert(ins, asset, src, { W, H, fps, dir }) {
   return out;
 }
 
+// 一拍动态镜头 → seg-<拍>.mp4。连续的模板镜头合成一次 Remotion 渲染,素材镜头按进画规则单独渲,
+// 最后按顺序接起来。每一段按内容缓存:只改了一个镜头的字,只重渲它所在的那一段。
+async function renderShotsBeat(item, v, { beat, words, beatDur, segDur, W, H, fps, dir, ov }) {
+  const decisions = [];
+  const seg = join(dir, `seg-${beat}.mp4`);
+  const index = shotIndex(words);
+  const { spans, notes } = timeShots(v.shots, index, beatDur, segDur, fps);
+  const runs = [];
+  for (const sp of spans) {
+    const s = v.shots[sp.i];
+    const last = runs[runs.length - 1];
+    if (s.tpl && last?.kind === "tpl") last.spans.push(sp);
+    else runs.push({ kind: s.tpl ? "tpl" : "asset", spans: [sp] });
+  }
+  const parts = [];
+  let reusedParts = 0;
+  for (let r = 0; r < runs.length; r++) {
+    const run = runs[r];
+    const f0 = run.spans[0].fromFrame;
+    const nFrames = run.spans.reduce((n, sp) => n + sp.frames, 0);
+    const part = join(dir, `seg-${beat}-p${r}.mp4`);
+    if (run.kind === "tpl") {
+      const props = {
+        theme: v.theme,
+        W,
+        H,
+        frames: nFrames,
+        shots: run.spans.map((sp) => ({ tpl: v.shots[sp.i].tpl, p: v.shots[sp.i].p, from: sp.fromFrame - f0, frames: sp.frames, cues: sp.cues })),
+      };
+      mark(item, beat, `渲镜头动画(${run.spans.length} 个)`);
+      const res = await cached(part, { kind: "shots", props, tv: shotsVersion() }, async (tmp) => {
+        await renderBeat(props, tmp, { workRoot: WORK_ROOT });
+      });
+      if (res.reused) reusedParts++;
+    } else {
+      const s = v.shots[run.spans[0].i];
+      const a = v.assetPaths[s.asset];
+      const dur = nFrames / fps;
+      const still = a.kind !== "video";
+      mark(item, beat, "素材镜头进画");
+      const res = await cached(part, { kind: "asset", src: await fileSha(a.path), W, H, fps, segDur: Math.round(dur * 1000), frames: nFrames, still, ov: still ? {} : ov }, async (tmp) => {
+        const out = await renderAssetSeg(a.path, tmp, { W, H, fps, segDur: dur, move: null, frames: nFrames, still, ov: still ? {} : ov, beat });
+        return { decisions: out.decisions };
+      });
+      decisions.push(...(res.meta?.decisions || []));
+      if (res.reused) reusedParts++;
+    }
+    parts.push(part);
+  }
+  // 接起来,同时统一成和其它拍一样的格式:Remotion 出的是全色域 yuvj420p、时间基 1/90000,
+  // 不统一的话后面 xfade 拼接直接报 Invalid argument
+  mark(item, beat, "接镜头");
+  {
+    const inputs = parts.flatMap((p) => ["-i", p]);
+    const norm = (k) => `[${k}:v]scale=in_range=auto:out_range=tv,format=yuv420p,setsar=1,fps=${fps}[v${k}]`;
+    const chain = parts.map((_, k) => norm(k)).join(";") + ";" + parts.map((_, k) => `[v${k}]`).join("") + `concat=n=${parts.length}:v=1:a=0[v]`;
+    await ffmpeg([...inputs, "-filter_complex", chain, "-map", "[v]", "-an", "-c:v", "libx264", "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p", "-video_track_timescale", "15360", seg]);
+  }
+  const line = spans
+    .map((sp) => {
+      const s = v.shots[sp.i];
+      const name = s.asset ? `录屏「${String(s.asset).slice(0, 10)}」` : TPL_LABEL[s.tpl] ?? s.tpl;
+      return `${name} ${sp.start.toFixed(1)}–${Math.min(beatDur, sp.end).toFixed(1)}s`;
+    })
+    .join(" → ");
+  const hit = spans.slice(1).filter((sp) => sp.cut === "spoken").length;
+  decisions.push({
+    beat,
+    topic: "镜头",
+    choice: line,
+    why: `${v.by === "you" ? "你改过的镜头;" : ""}切点跟着配音走(念到那几个字就切),${hit}/${Math.max(0, spans.length - 1)} 个切点对上了台词${notes.length ? `;${notes.join(";")}` : ""}${reusedParts === parts.length ? ";和上次一样,直接沿用" : reusedParts ? `;${reusedParts}/${parts.length} 段沿用` : ""}`,
+    warn: notes.length > 0,
+    by: v.by === "you" ? "you" : "auto",
+  });
+  // 音效/死帧质检要知道"画面在哪些时刻有变化":镜头切点 + 镜头里元素出现的时刻
+  const reveals = spans.flatMap((sp) => [sp.start, ...sp.cues.filter((c) => c != null).map((c) => sp.start + c / fps)]).filter((t) => t > 0.5 && t < beatDur - 0.3);
+  return { decisions, reused: reusedParts === parts.length, reveals };
+}
+
 async function edit(item) {
   const up = item.upstream || {};
   mark(item, null, "下载画面和配音");
@@ -1256,6 +1358,14 @@ async function edit(item) {
   // 第 i 段要多渲一个转场的时长,给下一刀当重叠料;xfade 吃掉的正好是多出来的部分,
   // 所以成片总长仍然等于 Σ(每拍时长 + 句尾留白),音轨不用动。
   const trans = planTransitions(meta);
+  // 两拍都是动态镜头:普通衔接用硬切。镜头自己有入场动画,叠化只会让前后两层字叠在一起像花屏
+  // (2026-09-23 看成片:女命/官杀 和 你的正缘画像 叠在同一个位置)。重转场(推/滑)保留。
+  trans.forEach((t, k) => {
+    if (t.type === "fade" && visuals[k]?.source === "shots" && visuals[k + 1]?.source === "shots") {
+      // 0.067s = 2 帧,看起来就是硬切;xfade 的时长短于 ~1.5 帧会静默失败,后面的拍全被丢掉
+      Object.assign(t, { type: "fade", dur: 0.067, why: "镜头之间硬切:每个镜头自己有入场动画,叠化会让两层字叠在一起" });
+    }
+  });
   // 每拍句尾的停顿 = 你拖出来的停顿(覆盖)或配音自带的 + 插在这段停顿里的纯画面时长。
   // 纯画面插入不动配音、不动素材 —— 只是把这里的停顿拉长 N 秒,这 N 秒里全屏放素材。
   const effGap = meta.map((m, i) => {
@@ -1278,6 +1388,17 @@ async function edit(item) {
     const seg = join(dir, `seg-${beat}.mp4`);
     const beatInfo = { name: beat, start: cumStart, dur: beatDur, words, transitionIn: i > 0 ? trans[i - 1] : null, reveals: [], drawn: false };
     ensureDisk(dir, 0.5, `渲 ${beat} `);
+    if (v.source === "shots") {
+      const r = await renderShotsBeat(item, v, { beat, words, beatDur, segDur, W, H, fps, dir, ov });
+      decisions.push(...r.decisions);
+      if (r.reused) reused++;
+      beatInfo.reveals = r.reveals;
+      console.log(`  [edit] seg ${beat} ${segDur.toFixed(1)}s done (${v.shots.length} 个镜头${r.reused ? ",沿用" : ""})`);
+      segs.push(seg);
+      sfxBeats.push(beatInfo);
+      cumStart += beatDur;
+      continue;
+    }
     decisions.push({
       beat,
       topic: "画面",
@@ -1583,6 +1704,7 @@ async function edit(item) {
   const { url } = await uploadP(item, preview, `edit-${stamp()}.mp4`, "上传预览");
   const vs = (info.streams || []).find((x) => x.codec_type === "video") || {};
   const warn = [];
+  if (Math.abs(total - expected) > 5) throw new Error(`拼出来的成片只有 ${total.toFixed(1)}s,按配音应该 ${expected.toFixed(1)}s —— 拼接转场那一步丢了画面,没有提交`);
   if (Math.abs(total - expected) > 1.5) warn.push(`成片 ${total.toFixed(1)}s 与音轨预期 ${expected.toFixed(1)}s 对不上`);
   if (Number(vs.width) !== W || Number(vs.height) !== H) warn.push(`分辨率 ${vs.width}x${vs.height} ≠ ${W}x${H}`);
   const warnLine = warn.length ? `\n⚠ 剪辑自检:${warn.join(";")}` : "";
@@ -1605,6 +1727,9 @@ async function edit(item) {
       by: settings.sfx ? "you" : "auto",
       warn: sfxOn && !sfxReady(),
     },
+    ...(visuals.some((v) => v.source === "shots")
+      ? [{ topic: "配色", choice: { ink: "深墨蓝 + 香槟金", paper: "暖纸 + 朱红", dusk: "暗紫 + 暖橙" }[visuals.find((v) => v.source === "shots").theme] ?? "深墨蓝 + 香槟金", why: settings.theme ? "你定的" : "素材阶段按内容选的;点开可以换,只重做剪辑", key: "theme", value: visuals.find((v) => v.source === "shots").theme, by: settings.theme ? "you" : "auto" }]
+      : []),
     { topic: "渲染", choice: `重渲 ${visuals.length - reused} 拍 · 沿用 ${reused} 拍`, why: "素材、时长、参数都没变的拍直接用上次渲好的,只重渲改了的" },
     { topic: "审核用", choice: "720p 预览", why: `高清版(${(master.bytes / 1048576).toFixed(1)} MB)留在渲染机上直接给字幕用,润色时才整条上传 —— 上行慢,1080p 传一次要好几分钟` },
     ...(ovCount ? [{ topic: "你的参数", choice: `${ovCount} 拍用了你定的剪辑参数`, by: "you" }] : []),

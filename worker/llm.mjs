@@ -124,13 +124,27 @@ export async function chatJSON(messages, opts = {}, validate = null) {
       chat(
         [
           ...messages,
-          { role: "assistant", content: JSON.stringify(obj).slice(0, 12000) },
+          { role: "assistant", content: JSON.stringify(obj).slice(0, 40000) },
           { role: "user", content: `只修正下列问题,其余内容保持不变,返回完整 JSON(同样的结构),不要解释:\n${issues.map((x) => `- ${x}`).join("\n")}` },
         ],
         { ...opts, temperature: 0.2 },
       ),
     );
-    fixed = parseLoose(raw);
+    try {
+      fixed = parseLoose(raw);
+    } catch (e) {
+      // 补正稿本身 JSON 写坏了(长 JSON 常见):让它只修格式再交一次,别白白丢掉补正
+      console.log(`[llm] 补正稿不是合法 JSON(${String(e.message).slice(0, 60)}) → 只修格式再要一次`);
+      const again = await asRepair(() =>
+        chat(
+          [
+            { role: "user", content: `下面这段本该是合法 JSON,但格式坏了(常见原因:中文引号“”当了 JSON 引号、字符串里有没转义的双引号、尾逗号、被截断)。内容不变,只返回修正后的完整合法 JSON,不要解释:\n${raw.slice(0, 40000)}` },
+          ],
+          { ...opts, temperature: 0 },
+        ),
+      );
+      fixed = parseLoose(again);
+    }
   } catch (e) {
     console.log(`[llm] 补正没成(${String(e.message).slice(0, 80)}),用原稿`);
   }
