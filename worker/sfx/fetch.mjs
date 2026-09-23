@@ -19,9 +19,20 @@ for (const it of lib.items) {
     console.log(`拷贝 ${it.file}`);
     continue;
   }
-  const r = await fetch(it.download_url);
-  const buf = Buffer.from(await r.arrayBuffer());
-  if (!r.ok || sha(buf) !== it.sha256) throw new Error(`${it.file} 下载失败或校验不对(HTTP ${r.status})`);
+  let buf = null;
+  let status = 0;
+  for (let attempt = 1; attempt <= 3 && !buf; attempt++) {
+    try {
+      const r = await fetch(it.download_url, { signal: AbortSignal.timeout(60_000) });
+      status = r.status;
+      const b = Buffer.from(await r.arrayBuffer());
+      if (r.ok && sha(b) === it.sha256) buf = b;
+    } catch {
+      /* 网络抖一下再试 */
+    }
+    if (!buf) await new Promise((res) => setTimeout(res, 2000 * attempt));
+  }
+  if (!buf) throw new Error(`${it.file} 下载三次都失败或校验不对(HTTP ${status})`);
   writeFileSync(out, buf);
   console.log(`下载 ${it.file}`);
 }
