@@ -3,8 +3,8 @@ import { prisma } from "@/lib/db";
 import { parseChat, applyOps, type Clip, type ChatOp } from "@/lib/chat-ops";
 import { resolveStage } from "@/lib/resolve-stage";
 import { requeue } from "@/lib/rerun";
-import { applyOverrides } from "@/lib/overrides";
-import { parseDirect, type BeatKind } from "@/lib/direct-edit";
+import { applyOverrides, applyProjectSettings } from "@/lib/overrides";
+import { parseDirect, parseProjectSettings, type BeatKind } from "@/lib/direct-edit";
 import { STAGE_ORDER, stageLabel, type Decision, type Overrides } from "@/lib/stages";
 import { projectAssets } from "@/lib/media";
 
@@ -61,6 +61,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const cards: { name: string; text?: string; type?: string; theme?: string; asset?: string; anim?: string }[] =
     Array.isArray(footageArt.cards) ? footageArt.cards : [];
 
+  // ── ⓪ 整条片的设置(音效开关),不过 LLM ──
+  const proj = parseProjectSettings(said);
+  if (proj) {
+    const r = await applyProjectSettings(id, proj, { announce: false });
+    return say(r.ok ? (r.described.length ? `记下了:${r.described.join(",")}。${r.summary.replace(/^你改了整条片的剪辑设置\([^)]*\)。/, "")}` : "已经是这样设的了。") : `没改成:${r.error}`);
+  }
+
   // ── ① 直通车 ──
   const kindOf = (clip: string): BeatKind | undefined => {
     const c = cards.find((x) => x.name === clip);
@@ -102,7 +109,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   let parsed;
   try {
-    parsed = await parseChat(said, clips, project, awaiting ? { kind: awaiting.kind, label: stageLabel(awaiting.kind) } : null, assets, stateCtx);
+    parsed = await parseChat(said, clips, project, awaiting ? { kind: awaiting.kind, label: stageLabel(awaiting.kind) } : null, assets, stateCtx, id);
   } catch (e) {
     return say(`解析失败(${e instanceof Error ? e.message : "LLM 错误"}),你的消息我记下了,稍后再试。`);
   }

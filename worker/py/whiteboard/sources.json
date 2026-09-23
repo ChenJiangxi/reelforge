@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "source": "srt-whiteboard-animation",
+  "contract": "musedock-whiteboard-media-v1",
+  "files": [
+    {
+      "file": "python/stream_primitives.py",
+      "sourceFile": "scripts/stream_render.py",
+      "sourceSha256": "37c855c8a612c9f2f30f6820035f1021ba9ea547ccdc88609eb7db8184bbc5fb",
+      "sha256": "dc80387d123f12d538ce6b0c5ad0dc50f4603e59fd5bc6294847516dc47f14c8",
+      "coverage": "all functions, classes and constants from stream_render.py"
+    },
+    {
+      "file": "python/region_renderer.py",
+      "sourceFile": "scripts/render_stream_whiteboard.py",
+      "sourceSha256": "820e82a6fc5767c6202beaeb731f8235c806c12db81dbdff97c735b7de0a81bb",
+      "sha256": "8c470f1f21a363ec8bf56f011e04fdf8156fc1ab36d75f51b0a38f972c38ea08"
+    },
+    {
+      "file": "python/ffmpeg_frame_sink.py",
+      "sourceFile": "scripts/ffmpeg_frame_sink.py",
+      "sourceSha256": "86307d2f2454823862dae44fa8c7c704a7b44d41c435c2e4ea7fe9b2b3ad01d2",
+      "sha256": "37a2b4fb3566ff3f4cd541c4426033617ff8c059a5427fcffc92de600dd43691"
+    },
+    {
+      "file": "assets/drawing-hand.png",
+      "sourceFile": "assets/drawing-hand.png",
+      "sourceSha256": "dc054d4eedeb206fa61cd0ec5836647ec99e98d16cdecd0c622d7ee7e9b3b070",
+      "sha256": "dc054d4eedeb206fa61cd0ec5836647ec99e98d16cdecd0c622d7ee7e9b3b070"
+    }
+  ]
+}

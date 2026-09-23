@@ -35,6 +35,8 @@ export const claim = (stageId) =>
 export const submit = (stageId, status, artifacts) =>
   api("/api/worker/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ stageId, status, artifacts }) });
 export const resetWorking = () => api("/api/worker/reset", { method: "POST" });
+export const postCalls = (records) =>
+  api("/api/worker/calls", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ records }) }, 3);
 /** { stageId: status } —— worker 用来发现手上的阶段被重新排队了 */
 export const stageStatus = (ids) => api(`/api/worker/status?ids=${ids.map(encodeURIComponent).join(",")}`, {}, 4);
 

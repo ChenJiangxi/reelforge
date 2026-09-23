@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   CAMERA_CHOICES,
   CAMERA_LABELS,
+  DRAW_LABELS,
   FILL_LABELS,
   FIT_LABELS,
   describeOverride,
@@ -94,9 +95,13 @@ export function DecisionList({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {global.length > 0 && (
           <div className="border-b border-border/60 px-3 py-1.5">
-            {global.map((d, i) => (
-              <Row key={i} d={d} />
-            ))}
+            {global.map((d, i) =>
+              current.editable && d.key === "sfx" ? (
+                <EditableRow key={i} d={d} projectId={projectId} />
+              ) : (
+                <Row key={i} d={d} />
+              ),
+            )}
           </div>
         )}
         {beatOrder.map((name, i) => {
@@ -187,18 +192,20 @@ function EditableRow({ d, beat, projectId, tag }: { d: Decision; beat?: BeatInfo
   const [busy, setBusy] = useState(false);
   const [fromVal, setFromVal] = useState(String(d.value ?? 0));
   const key = d.key!;
-  const overridden = beat?.overrides?.[key] != null;
+  const projectLevel = key === "sfx"; // 整条片的设置,不挂在某一拍上
+  const beatKey = projectLevel ? null : (key as keyof Overrides);
+  const overridden = beatKey ? beat?.overrides?.[beatKey] != null : false;
   // 刚改了、剪辑还没重出:清单里还是上一版的值,旁边写上改成了什么
-  const pendingVal = beat?.overrides?.[key];
+  const pendingVal = beatKey ? beat?.overrides?.[beatKey] : undefined;
   const pending = pendingVal != null && String(pendingVal) !== String(d.value);
 
   async function send(body: Record<string, unknown>) {
-    if (!beat || busy) return;
+    if ((!beat && !projectLevel) || busy) return;
     setBusy(true);
     await fetch(`/api/project/${projectId}/override`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ clip: beat.name, ...body }),
+      body: JSON.stringify(projectLevel ? { project: { [key]: (body.set as Record<string, unknown>)?.[key] } } : { clip: beat!.name, ...body }),
     });
     setBusy(false);
     setEditing(false);
@@ -211,6 +218,8 @@ function EditableRow({ d, beat, projectId, tag }: { d: Decision; beat?: BeatInfo
   else if (key === "camera")
     options = (CAMERA_CHOICES[beat?.kind ?? "card"] ?? []).map((value) => ({ value, label: CAMERA_LABELS[value] ?? value }));
   else if (key === "slow") options = SLOW_STEPS.map((value) => ({ value, label: describeOverride("slow", value) }));
+  else if (key === "draw") options = Object.entries(DRAW_LABELS).map(([value, label]) => ({ value, label }));
+  else if (key === "sfx") options = [{ value: "on", label: "开" }, { value: "off", label: "关" }];
 
   return (
     <div className="grid grid-cols-[4.2rem_1fr] gap-x-2 py-0.5">
@@ -225,12 +234,12 @@ function EditableRow({ d, beat, projectId, tag }: { d: Decision; beat?: BeatInfo
         >
           {d.choice}
         </button>
-        {pending && <span className="ml-1.5 text-[11px] text-accent">→ {describeOverride(key, pendingVal)}(等重剪)</span>}
+        {pending && beatKey && <span className="ml-1.5 text-[11px] text-accent">→ {describeOverride(beatKey, pendingVal)}(等重剪)</span>}
         {overridden && (
           <>
             <span className="ml-1.5 text-[10px] text-accent">你定的</span>
             <button
-              onClick={() => send({ unset: [key] })}
+              onClick={() => send({ unset: [beatKey] })}
               disabled={busy}
               className="ml-1.5 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40"
               title="撤销,恢复成自动"

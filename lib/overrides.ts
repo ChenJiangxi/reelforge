@@ -1,12 +1,12 @@
 import { prisma } from "@/lib/db";
 import { requeue } from "@/lib/rerun";
-import { CAMERA_LABELS, OVERRIDE_LABELS, describeOverride, type Overrides } from "@/lib/stages";
+import { CAMERA_LABELS, OVERRIDE_LABELS, describeOverride, type EditSettings, type Overrides } from "@/lib/stages";
 import type { OverrideChange } from "@/lib/direct-edit";
 
 // 剪辑参数覆盖:存在脚本阶段 clips[i].overrides(跟着这一拍走,插句删句重新编号也不丢),
 // 只重跑剪辑(字幕/润色烧在剪辑上,锁死跟着走)。网页上的开关和聊天直通车都走这里。
 
-const KEYS: (keyof Overrides)[] = ["fit", "slow", "fill", "from", "camera"];
+const KEYS: (keyof Overrides)[] = ["fit", "slow", "fill", "from", "camera", "draw"];
 
 function clean(set: Overrides): Overrides {
   const out: Overrides = {};
@@ -15,6 +15,7 @@ function clean(set: Overrides): Overrides {
   if (set.fill === "pingpong" || set.fill === "freeze" || set.fill === "loop") out.fill = set.fill;
   if (set.from != null && Number.isFinite(Number(set.from))) out.from = Math.min(600, Math.max(0, Math.round(Number(set.from) * 10) / 10));
   if (set.camera && String(set.camera) in CAMERA_LABELS) out.camera = String(set.camera);
+  if (set.draw === "on" || set.draw === "off") out.draw = set.draw;
   return out;
 }
 
@@ -65,4 +66,21 @@ export async function applyOverrides(
     announce: opts.announce,
   });
   return { ok: true, described, summary: r.summary };
+}
+
+// 整条片的剪辑设置(目前只有音效开关):存在脚本阶段 artifacts.editSettings,只重跑剪辑
+export async function applyProjectSettings(projectId: string, set: EditSettings, opts: { announce?: boolean } = {}) {
+  const scriptStage = await prisma.stage.findFirst({ where: { projectId, kind: "script" } });
+  if (!scriptStage) return { ok: false, error: "还没有脚本阶段", described: [] as string[], summary: "" };
+  const art = scriptStage.artifacts ? JSON.parse(scriptStage.artifacts) : {};
+  const cur: EditSettings = { ...(art.editSettings ?? {}) };
+  const parts: string[] = [];
+  if (set.sfx === "on" || set.sfx === "off") {
+    if (cur.sfx !== set.sfx) parts.push(`音效 → ${set.sfx === "on" ? "开" : "关"}`);
+    cur.sfx = set.sfx;
+  }
+  if (!parts.length) return { ok: true, described: [] as string[], summary: "没有要改的设置。" };
+  await prisma.stage.update({ where: { id: scriptStage.id }, data: { artifacts: JSON.stringify({ ...art, editSettings: cur }) } });
+  const r = await requeue(projectId, { redo: ["edit"], reason: `你改了整条片的剪辑设置(${parts.join(",")})`, announce: opts.announce });
+  return { ok: true, described: parts, summary: r.summary };
 }

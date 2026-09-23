@@ -2,11 +2,17 @@
 // paper(暖纸感,情感/温暖内容)/ gradient(活力渐变,钩子/活泼)。
 // 内容保持在底部 ~17% 字幕安全区以上。
 import { createRequire } from "node:module";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require("/Users/macmini003/ops-bilibili/node_modules/playwright");
+
+// 手绘图解用的手写体(手札体):macOS 的按需下载字体 Chromium 看不到,由 worker/py/extract_fonts.py
+// 从系统字体包里抽成单个文件放在 worker/fonts/,渲染时拦截一个假地址把文件喂给页面。
+export const HAND_FONT = join(dirname(fileURLToPath(import.meta.url)), "fonts", "HannotateSC-W7.otf");
+const HAND_FONT_URL = "https://rf-fonts.local/hand.otf";
 
 export function sizeFor(aspect) {
   if (aspect === "16:9") return { width: 1920, height: 1080 };
@@ -66,14 +72,38 @@ const THEMES = {
     rowBorder: "rgba(255,255,255,.2)",
     qmark: "rgba(255,255,255,.45)",
   },
+  // 手绘图解(学 MuseDock 的「白底手写图解」):纯白纸、手写体、黑线条,红字标关系,橙字只给结论。
+  // 纸面必须是纯 #FFFFFF、不能有渐变/阴影/网格 —— 落墨程序把"不是近白"的像素都当成笔迹。
+  sketch: {
+    bg: "#FFFFFF",
+    text: "#1d1d1f",
+    bigText: "color:#1d1d1f;",
+    accent: "#d23c35",
+    accentBorder: "#1d1d1f",
+    subText: "#e8750a",
+    footText: "#555555",
+    grid: "transparent",
+    nodeBg: "transparent",
+    nodeBorder: "#1d1d1f",
+    accentBg: "transparent",
+    accentText: "#FFFFFF",
+    vsColor: "#2b63c9",
+    rowBorder: "#1d1d1f",
+    qmark: "#d23c35",
+  },
 };
 
 export function cardHTML(
   { kicker = "", big = "", sub = "", foot = "", type = "text", big2 = "", step_no = "", nodes = [], cols = [], rows = [], steps = [], theme = "dark" },
   { width, height },
-  { animate = false } = {},
+  { animate = false, reveal = null, sketch = false } = {},
 ) {
+  if (sketch) theme = "sketch";
   const T = THEMES[theme] || THEMES.dark;
+  // reveal:每一项什么时候出现(秒),由 reveal.mjs 按念到的时间算;没给就用原来的固定节奏
+  const R = reveal?.items || {};
+  const at = (key, fallback) => (reveal && R[key] != null ? R[key] : fallback);
+  const delay = (sec) => `animation-delay:${Number(sec).toFixed(2)}s;`;
   const vertical = height > width;
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const bigSize = type === "data"
@@ -94,36 +124,36 @@ export function cardHTML(
     center = `
       <div class="diagram">
         ${nodes.map((n, i) => `
-          <div class="node a-node ${n.tone === "accent" ? "node-accent" : ""}" style="animation-delay:${0.15 + i * 0.28}s;${stagger(i, nodes.length)}">
+          <div class="node a-node ${n.tone === "accent" ? "node-accent" : ""}" data-rk="node${i}" style="${delay(at(`node${i}`, 0.15 + i * 0.28))}${stagger(i, nodes.length)}">
             <div class="node-label">${esc(n.label)}</div>
             ${n.sub ? `<div class="node-sub">${esc(n.sub)}</div>` : ""}
           </div>
-          ${i < nodes.length - 1 ? `<div class="edge a-edge" style="animation-delay:${0.35 + i * 0.28}s"><div class="edge-arrow">→</div>${n.nextLabel ? `<div class="edge-label">${esc(n.nextLabel)}</div>` : ""}</div>` : ""}
+          ${i < nodes.length - 1 ? `<div class="edge a-edge" data-rk="edge${i}" style="${delay(reveal ? Math.max(0, at(`node${i + 1}`, 0) - 0.15) : 0.35 + i * 0.28)}"><div class="edge-arrow">→</div>${n.nextLabel ? `<div class="edge-label">${esc(n.nextLabel)}</div>` : ""}</div>` : ""}
         `).join("")}
       </div>
-      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
+      ${sub ? `<div class="sub a-sub" data-rk="sub" ${reveal?.sub != null ? `style="${delay(reveal.sub)}"` : ""}>${esc(sub)}</div>` : ""}`;
   } else if (type === "table") {
     center = `
-      ${big ? `<div class="big" style="font-size:${Math.round(bigSize * 0.6)}px;margin-bottom:${vertical ? 44 : 32}px">${esc(big)}</div>` : ""}
+      ${big ? `<div class="big" data-rk="title" style="font-size:${Math.round(bigSize * 0.6)}px;margin-bottom:${vertical ? 44 : 32}px">${esc(big)}</div>` : ""}
       <table class="ktable">
-        <thead><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
-        <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody>
+        <thead data-rk="thead"><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map((r, i) => `<tr data-rk="row${i}" ${reveal ? `style="${delay(at(`row${i}`, 0.55 + i * 0.2))}"` : ""}>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody>
       </table>
-      ${sub ? `<div class="sub" style="font-size:${vertical ? 40 : 34}px">${esc(sub)}</div>` : ""}`;
+      ${sub ? `<div class="sub ${reveal ? "a-sub" : ""}" data-rk="sub" style="font-size:${vertical ? 40 : 34}px;${reveal?.sub != null ? delay(reveal.sub) : ""}">${esc(sub)}</div>` : ""}`;
   } else if (type === "flow") {
     center = `
-      ${big ? `<div class="big" style="font-size:${Math.round(bigSize * 0.6)}px;margin-bottom:${vertical ? 48 : 36}px">${esc(big)}</div>` : ""}
+      ${big ? `<div class="big" data-rk="title" style="font-size:${Math.round(bigSize * 0.6)}px;margin-bottom:${vertical ? 48 : 36}px">${esc(big)}</div>` : ""}
       <div class="flow">
         ${steps.map((st, i) => `
-          <div class="fstep a-step" style="animation-delay:${0.15 + i * 0.25}s;${stagger(i, steps.length)}">
+          <div class="fstep a-step" data-rk="step${i}" style="${delay(at(`step${i}`, 0.15 + i * 0.25))}${stagger(i, steps.length)}">
             <div class="fstep-no">${i + 1}</div>
             <div class="fstep-label">${esc(st.label)}</div>
             ${st.sub ? `<div class="fstep-sub">${esc(st.sub)}</div>` : ""}
           </div>
-          ${i < steps.length - 1 ? `<div class="farrow a-edge" style="animation-delay:${0.3 + i * 0.25}s">→</div>` : ""}
+          ${i < steps.length - 1 ? `<div class="farrow a-edge" data-rk="arrow${i}" style="${delay(reveal ? Math.max(0, at(`step${i + 1}`, 0) - 0.15) : 0.3 + i * 0.25)}">→</div>` : ""}
         `).join("")}
       </div>
-      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
+      ${sub ? `<div class="sub a-sub" data-rk="sub" ${reveal?.sub != null ? `style="${delay(reveal.sub)}"` : ""}>${esc(sub)}</div>` : ""}`;
   } else if (type === "contrast") {
     const sideFont = (t) => {
       const len = Math.max(1, String(t).length);
@@ -131,26 +161,26 @@ export function cardHTML(
     };
     center = `
       <div class="versus">
-        <div class="side a-side-l"><div class="side-big" style="font-size:${sideFont(big)}px">${esc(big)}</div></div>
-        <div class="vs a-vs">VS</div>
-        <div class="side alt a-side-r"><div class="side-big" style="font-size:${sideFont(big2)}px">${esc(big2)}</div></div>
+        <div class="side a-side-l" data-rk="sideL" ${reveal ? `style="${delay(at("sideL", 0.25))}"` : ""}><div class="side-big" style="font-size:${sideFont(big)}px">${esc(big)}</div></div>
+        <div class="vs a-vs" data-rk="vs" ${reveal ? `style="${delay(Math.max(0, at("sideR", 0.95) - 0.3))}"` : ""}>VS</div>
+        <div class="side alt a-side-r" data-rk="sideR" ${reveal ? `style="${delay(at("sideR", 0.55))}"` : ""}><div class="side-big" style="font-size:${sideFont(big2)}px">${esc(big2)}</div></div>
       </div>
-      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
+      ${sub ? `<div class="sub a-sub" data-rk="sub" ${reveal?.sub != null ? `style="${delay(reveal.sub)}"` : ""}>${esc(sub)}</div>` : ""}`;
   } else if (type === "step") {
     center = `
-      ${step_no ? `<div class="stepno a-big">${esc(step_no)}</div>` : ""}
-      <div class="big">${esc(big)}</div>
-      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
+      ${step_no ? `<div class="stepno a-big" data-rk="stepno">${esc(step_no)}</div>` : ""}
+      <div class="big" data-rk="title">${esc(big)}</div>
+      ${sub ? `<div class="sub a-sub" data-rk="sub" ${reveal?.sub != null ? `style="${delay(reveal.sub)}"` : ""}>${esc(sub)}</div>` : ""}`;
   } else if (type === "quote") {
     center = `
-      <div class="qmark a-q">"</div>
-      <div class="big quote a-big" data-big>${esc(big)}</div>
-      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
+      <div class="qmark a-q" data-rk="qmark">"</div>
+      <div class="big quote a-big" data-big data-rk="title">${esc(big)}</div>
+      ${sub ? `<div class="sub a-sub" data-rk="sub" ${reveal?.sub != null ? `style="${delay(reveal.sub)}"` : ""}>${esc(sub)}</div>` : ""}`;
   } else {
     center = `
-      <div class="big a-big ${type === "data" ? "data" : ""}" data-big>${esc(big)}</div>
-      ${type === "data" ? `<div class="bar a-bar"></div>` : ""}
-      ${sub ? `<div class="sub a-sub">${esc(sub)}</div>` : ""}`;
+      <div class="big a-big ${type === "data" ? "data" : ""}" data-big data-rk="title">${esc(big)}</div>
+      ${type === "data" ? `<div class="bar a-bar" data-rk="bar"></div>` : ""}
+      ${sub ? `<div class="sub a-sub" data-rk="sub" ${reveal?.sub != null ? `style="${delay(reveal.sub)}"` : ""}>${esc(sub)}</div>` : ""}`;
   }
 
   return `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -232,6 +262,24 @@ body::before {
 .fstep-label { font-size: ${vertical ? 38 : 32}px; font-weight: 700; color: ${T.text}; line-height: 1.3; }
 .fstep-sub { margin-top: 8px; font-size: ${vertical ? 27 : 24}px; color: ${T.footText}; line-height: 1.4; }
 .farrow { align-self: center; font-size: ${vertical ? 44 : 40}px; color: ${T.accent}; font-weight: 700; }
+${theme === "sketch" ? `
+@font-face { font-family: "RFHand"; src: url("${HAND_FONT_URL}") format("opentype"); font-display: block; }
+body { font-family: "RFHand", "Kaiti SC", "PingFang SC", sans-serif; }
+body::before { display: none; }
+.big, .side-big, .node-label, .fstep-label { font-weight: 700; letter-spacing: .04em; }
+.kicker { border: 3px solid #1d1d1f; color: #1d1d1f; border-radius: 26px 18px 24px 16px / 16px 24px 18px 26px; }
+.node { border-width: 4px; border-radius: 34px 22px 30px 18px / 20px 32px 18px 28px; }
+.node-accent { border-color: #d23c35; }
+.node-sub, .fstep-sub { color: #2b63c9; }
+.edge-arrow, .farrow { font-family: "RFHand", sans-serif; font-size: ${vertical ? 88 : 72}px; }
+.fstep { border-width: 3px; border-radius: 28px 18px 26px 16px / 18px 26px 16px 28px; }
+.fstep-no { background: transparent; color: #d23c35; border: 3px solid #d23c35; }
+.ktable { background: transparent; border: none; }
+.ktable th { color: #d23c35; border-bottom: 4px solid #1d1d1f; }
+.ktable td { border-bottom: 2px solid #1d1d1f; }
+.sub { font-weight: 700; }
+.bar { background: #d23c35; }
+` : ""}
 ${animate ? `
 /* ── 入场动画(hyperframes 式:布局先行,动画只负责"怎么进来";入场完静止) ── */
 @keyframes rf-fade-down { from { opacity:0; transform:translateY(-24px);} to {opacity:1; transform:none;} }
@@ -268,6 +316,7 @@ ${animate ? `
 .ktable tbody tr:nth-child(1) { animation-delay:.55s } .ktable tbody tr:nth-child(2) { animation-delay:.75s }
 .ktable tbody tr:nth-child(3) { animation-delay:.95s } .ktable tbody tr:nth-child(4) { animation-delay:1.15s }
 .ktable thead tr { animation: rf-fade-down .4s .3s both; }
+${reveal ? `.a-sub { animation-duration: .5s; } .ktable tbody tr { animation-duration: .45s; }` : ""}
 ` : ""}
 </style>
 ${animate && type === "data" ? `<script>
@@ -289,7 +338,7 @@ addEventListener('load', () => {
 </script>` : ""}
 </head><body>
 <div class="wrap">
-  ${kicker ? `<div class="kicker a-kicker">${esc(kicker)}</div>` : ""}
+  ${kicker ? `<div class="kicker a-kicker" data-rk="kicker">${esc(kicker)}</div>` : ""}
   ${center}
 </div>
 ${foot ? `<div class="foot">${esc(foot)}</div>` : ""}
@@ -352,7 +401,7 @@ async function inspectLayout(page, { width, height }) {
 
 // 动画卡:Playwright recordVideo 实时录 webm(入场动画在头 ~1.5s,之后静止,
 // 剪辑时按拍长裁剪/循环尾巴即可)。durSec 建议 10-12s。
-export async function renderCardVideo(content, size, durSec, outPath) {
+export async function renderCardVideo(content, size, durSec, outPath, { reveal = null } = {}) {
   mkdirSync(join(outPath, ".."), { recursive: true });
   const b = await browser();
   const tmp = join(outPath, "..", `rec-${Date.now()}`);
@@ -364,7 +413,7 @@ export async function renderCardVideo(content, size, durSec, outPath) {
     recordVideo: { dir: tmp, size },
   });
   const page = await ctx.newPage();
-  await page.setContent(cardHTML(content, size, { animate: true }), { waitUntil: "load" });
+  await page.setContent(cardHTML(content, size, { animate: true, reveal }), { waitUntil: "load" });
   await page.waitForTimeout(Math.round(durSec * 1000));
   await page.close();
   const vids = require("node:fs").readdirSync(tmp).filter((n) => n.endsWith(".webm"));
@@ -375,10 +424,56 @@ export async function renderCardVideo(content, size, durSec, outPath) {
   return outPath;
 }
 
+// 手绘图解的底图:把同一张卡用手绘风格渲成静态 PNG,顺便量出每一项的位置 ——
+// 这些框就是落墨程序的"分区",按 order 的顺序一块一块画出来(不用生图模型,字一定对)。
+export async function renderSketchCard(content, size, outPath, order = []) {
+  mkdirSync(join(outPath, ".."), { recursive: true });
+  const b = await browser();
+  const ctx = await b.newContext({ viewport: size, deviceScaleFactor: 1, locale: "zh-CN" });
+  const page = await ctx.newPage();
+  if (!existsSync(HAND_FONT)) throw new Error("手写体没准备好:在 worker 目录跑一次 worker/py/.venv/bin/python worker/py/extract_fonts.py");
+  await page.route(HAND_FONT_URL, (route) => route.fulfill({ path: HAND_FONT, contentType: "font/otf" }));
+  await page.setContent(cardHTML(content, size, { sketch: true }), { waitUntil: "load" });
+  await page.evaluate(async () => {
+    await document.fonts.load('80px "RFHand"', "命");
+    await document.fonts.ready;
+  });
+  const boxes = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-rk]")].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { key: el.dataset.rk, x: r.left, y: r.top, width: r.width, height: r.height };
+    }),
+  );
+  await page.screenshot({ path: outPath });
+  await ctx.close();
+  const pad = 10;
+  const byKey = new Map(boxes.filter((bx) => bx.width > 1 && bx.height > 1).map((bx) => [bx.key, bx]));
+  const keys = [...order.filter((k) => byKey.has(k)), ...[...byKey.keys()].filter((k) => !order.includes(k))];
+  const regions = keys.map((k) => {
+    const bx = byKey.get(k);
+    const x = Math.max(0, Math.floor(bx.x - pad));
+    const y = Math.max(0, Math.floor(bx.y - pad));
+    return {
+      key: k,
+      x,
+      y,
+      width: Math.min(size.width - x, Math.ceil(bx.width + pad * 2)),
+      height: Math.min(size.height - y, Math.ceil(bx.height + pad * 2)),
+    };
+  });
+  return { path: outPath, regions };
+}
+
 // One subtitle line as a full-frame TRANSPARENT PNG (text near the bottom),
 // for ffmpeg overlay — this machine's ffmpeg is built without libass/drawtext.
-export async function renderSubLine(text, { width, height }, outPath, theme = "dark") {
-  const esc = String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+export async function renderSubLine(text, { width, height }, outPath, theme = "dark", highlight = null) {
+  const escOf = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  // 镜头正推到的那个词在字幕里高亮(学 MuseDock captionLayer:#FFD54A、加粗、放大 1.08)
+  let esc = escOf(text);
+  if (highlight && String(text).includes(highlight)) {
+    const i = String(text).indexOf(highlight);
+    esc = `${escOf(String(text).slice(0, i))}<span class="hl">${escOf(highlight)}</span>${escOf(String(text).slice(i + highlight.length))}`;
+  }
   const fontSize = Math.round(height * 0.032);
   const bottom = Math.round(height * 0.085);
   const lightBg = theme === "paper";
@@ -395,6 +490,7 @@ html, body { width: ${width}px; height: ${height}px; background: transparent; ov
   text-shadow: 0 ${Math.round(height * 0.003)}px ${Math.round(height * 0.01)}px ${lightBg ? "rgba(250,246,238,.8)" : "rgba(0,0,0,.65)"};
   paint-order: stroke fill;
 }
+.hl { color: #FFD54A; font-weight: 800; display: inline-block; transform: scale(1.08); margin: 0 .06em; }
 </style></head><body><div class="line">${esc}</div></body></html>`;
   const b = await browser();
   const ctx = await b.newContext({ viewport: { width, height }, deviceScaleFactor: 1, locale: "zh-CN" });

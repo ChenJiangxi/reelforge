@@ -188,7 +188,7 @@ speed 是相对基准音色的倍率 0.82-1.25,pitch -3~3,emotion∈happy|surpri
       content: `这是初稿(JSON):
 ${JSON.stringify(draft, null, 1)}
 
-按清单改完,返回同样结构的完整 JSON(narration + clips,每拍都要带 text/tts/say)。没毛病的地方别动。
+按清单改完,返回同样结构的完整 JSON(narration + clips,每拍都要带 name/beat/text/tts/say/visual_type/visual,画面简报别丢)。没毛病的地方别动。
 目标时长 ~${item.duration} 秒:正文(不算标点)预算 ${budget} 字。超了就删次要内容压回预算;没超就别为了改而改长短 —— 既不加废话凑字数,也别删掉有信息量的句子。`,
     },
   ],

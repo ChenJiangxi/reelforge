@@ -45,6 +45,9 @@ const RULES: Rule[] = [
   { re: /(硬)?循环(播放?)?/, apply: () => ({ fill: "loop" }) },
   { re: /从(第)?\s*(\d+(?:\.\d+)?)\s*秒(开始|起|处)?|跳过前\s*(\d+(?:\.\d+)?)\s*秒/, apply: (m) => ({ from: Number(m[2] ?? m[4]) }) },
   { re: /(别|不要|不用)(加)?(运镜|推拉|推镜|晃)|镜头(别|不要)动|固定镜头/, apply: () => ({ camera: "none" }) },
+  { re: /(别|不要|不用)(画|手绘)|换回(动画)?卡片?/, apply: () => ({ draw: "off" }) },
+  { re: /手绘|画出来|一笔一笔/, apply: () => ({ draw: "on" }) },
+  { re: /(跟着|按)(台词|念的|口播)对焦|对焦/, apply: () => ({ camera: "focus" }) },
   { re: /推近|往前推/, apply: () => ({ camera: "pushIn" }) },
   { re: /拉远|往后拉/, apply: () => ({ camera: "pullOut" }) },
   { re: /左摇|往左(摇|移)/, apply: () => ({ camera: "panLeft" }) },
@@ -61,6 +64,7 @@ function applicable(key: keyof Overrides, kind: BeatKind | undefined, v: unknown
   if (key === "fit" && (kind === "card" || kind === "anim")) return "是设计卡,本来就按画面尺寸做的,没有裁不裁的问题";
   if ((key === "slow" || key === "fill" || key === "from") && kind !== "video") return "不是录屏视频,没有播放速度/时长可调";
   if (key === "camera" && !CAMERA_CHOICES[kind]?.includes(String(v))) return `这种画面不支持「${String(v)}」运镜`;
+  if (key === "draw" && kind !== "anim") return "只有设计卡能画成手绘图解,录屏和图片不行";
   return null;
 }
 
@@ -148,4 +152,12 @@ export function parseDirect(
     .replace(/\s+/g, " ")
     .trim();
   return { changes, problems, leftover: leftover.length > 1 ? leftover : "" };
+}
+
+/** 整条片的设置,不指到某一拍:「关掉音效」「音效打开」 */
+export function parseProjectSettings(text: string): { sfx?: "on" | "off" } | null {
+  const t = text.trim();
+  if (/(关掉|关闭|不要|去掉|别加|别要|取消)(一下)?(所有的?)?音效|音效(关掉|关了|关闭|不要|去掉)/.test(t)) return { sfx: "off" };
+  if (/(打开|加上|开启|要|恢复)(一下)?音效|音效(打开|开着|加上|加回来)/.test(t)) return { sfx: "on" };
+  return null;
 }

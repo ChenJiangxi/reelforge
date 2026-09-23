@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { stageLabel, type Artifacts, type Comment } from "@/lib/stages";
 import { DecisionList, type BeatInfo, type DecisionSet } from "@/components/DecisionList";
 import { RerunForm } from "@/components/RerunForm";
+import { CallLog } from "@/components/CallLog";
 
 export type ClipThumb = {
   name: string;
@@ -107,6 +108,7 @@ export function PreviewPane({
   const { over, dropProps } = useAssign(projectId);
   const [rerun, setRerun] = useState<{ stageId: string; note: string; allowSwitch: boolean } | null>(null);
   const [activeBeat, setActiveBeat] = useState<string | null>(null);
+  const [callsFor, setCallsFor] = useState<string | null>(null); // 打开了哪个阶段的调用记录
   const awaiting = stages.find((s) => s.status === "awaiting_review");
   const withVideo = [...stages].reverse().find((s) => s.artifacts.video);
   const working = stages.find((s) => s.status === "working");
@@ -183,6 +185,17 @@ export function PreviewPane({
               重做这一步
             </button>
           )}
+          {view.kind && view.status !== "pending" && (
+            <button
+              onClick={() => setCallsFor(callsFor === view.kind ? null : view.kind)}
+              className={`rounded-full border px-3 py-1 text-xs hover:border-foreground/30 ${
+                callsFor === view.kind ? "border-foreground/40 text-foreground" : "border-border text-muted-foreground"
+              }`}
+              title="这一步每次问模型 / 配音的原始请求和返回"
+            >
+              调用记录
+            </button>
+          )}
           {withVideo && !showingCut && (
             <button
               onClick={() => onSelect(withVideo.id)}
@@ -194,6 +207,11 @@ export function PreviewPane({
         </div>
       </div>
 
+      {callsFor === view.kind ? (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <CallLog key={view.kind} projectId={projectId} stage={view.kind} onClose={() => setCallsFor(null)} />
+        </div>
+      ) : (
       <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:flex lg:gap-3 lg:overflow-hidden">
         <div className="min-h-0 min-w-0 lg:flex-1 lg:overflow-y-auto">
           {failure && (
@@ -223,6 +241,7 @@ export function PreviewPane({
           </aside>
         )}
       </div>
+      )}
 
       {showTracks && !openRerun && (
         <Tracks clips={clips} wave={wave} audio={audio} subs={subs} vertical={vertical} dropProps={dropProps} over={over} />

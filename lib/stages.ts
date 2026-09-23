@@ -178,7 +178,7 @@ export type Decision = {
   choice: string;
   why?: string;
   by?: "auto" | "you";
-  key?: keyof Overrides;
+  key?: keyof Overrides | "sfx";
   value?: string | number;
   warn?: boolean;
 };
@@ -194,9 +194,14 @@ export type Overrides = {
   fill?: "pingpong" | "freeze" | "loop";
   /** 从素材第几秒开始用 */
   from?: number;
-  /** 运镜(见 CAMERA_LABELS),none = 不加运镜 */
+  /** 运镜(见 CAMERA_LABELS),none = 不加运镜,focus = 录屏跟着台词对焦 */
   camera?: string;
+  /** 这一拍画成手绘图解(on)或不画(off);不设 = 默认前两个关系图/流程卡画 */
+  draw?: "on" | "off";
 };
+
+/** 整条片的剪辑设置(存在脚本阶段 artifacts.editSettings) */
+export type EditSettings = { sfx?: "on" | "off" };
 
 export const OVERRIDE_LABELS: Record<keyof Overrides, string> = {
   fit: "进画",
@@ -204,12 +209,15 @@ export const OVERRIDE_LABELS: Record<keyof Overrides, string> = {
   fill: "不够长时",
   from: "起点",
   camera: "运镜",
+  draw: "手绘",
 };
+export const DRAW_LABELS: Record<string, string> = { on: "画成手绘", off: "不手绘" };
 
 export const FIT_LABELS: Record<string, string> = { contain: "整幅放进去", cover: "铺满裁切" };
 export const FILL_LABELS: Record<string, string> = { pingpong: "正倒放接龙", freeze: "冻最后一帧", loop: "硬循环" };
 export const CAMERA_LABELS: Record<string, string> = {
   none: "不加运镜",
+  focus: "跟着台词对焦",
   pushIn: "推近",
   pushSoft: "轻推",
   pullOut: "拉远",
@@ -222,16 +230,17 @@ export const CAMERA_LABELS: Record<string, string> = {
 };
 /** 每种画面能用的运镜(和 worker/stages.mjs 的 CAM_MOVES / CAM_ANIM 对应) */
 export const CAMERA_CHOICES: Record<string, string[]> = {
-  image: ["pushIn", "pushSoft", "pullOut", "panRight", "panLeft", "driftUp", "hold", "none"],
+  image: ["focus", "pushIn", "pushSoft", "pullOut", "panRight", "panLeft", "driftUp", "hold", "none"],
   card: ["pushIn", "pushSoft", "pullOut", "panRight", "panLeft", "driftUp", "hold", "none"],
   anim: ["pushSoft", "pullSoft", "pushMicro", "none"],
-  video: ["none", "pushSoft", "pullSoft", "pushMicro"],
+  video: ["focus", "none", "pushSoft", "pullSoft", "pushMicro"],
 };
 
 export function describeOverride(key: keyof Overrides, v: unknown): string {
   if (key === "fit") return FIT_LABELS[String(v)] ?? String(v);
   if (key === "fill") return FILL_LABELS[String(v)] ?? String(v);
   if (key === "camera") return CAMERA_LABELS[String(v)] ?? String(v);
+  if (key === "draw") return DRAW_LABELS[String(v)] ?? String(v);
   if (key === "slow") {
     const n = Number(v);
     return Math.abs(n - 1) < 0.01 ? "原速" : n > 1 ? `放慢到 ${n.toFixed(2)} 倍长` : `加速 ${(1 / n).toFixed(2)}x`;

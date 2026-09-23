@@ -7,7 +7,8 @@
 // Required env: BOARD_URL, WORKER_TOKEN, OPENROUTER_API_KEY, MINIMAX_API_KEY
 // Run via: secret exec OPENROUTER_API_KEY_REELFORGE MINIMAX_API_KEY -- \
 //   env OPENROUTER_API_KEY=$OPENROUTER_API_KEY_REELFORGE node worker/index.mjs
-import { poll, claim, submit, resetWorking, stageStatus } from "./board.mjs";
+import { poll, claim, submit, resetWorking, stageStatus, postCalls } from "./board.mjs";
+import { withCallContext, flushCalls } from "./calls.mjs";
 import { STAGES, WORK_ROOT } from "./stages.mjs";
 import { freeGB } from "./ffmpeg.mjs";
 import { loadPlaybooks } from "./prompts.mjs";
@@ -79,7 +80,8 @@ async function runItem(item) {
   }
   // 每一步开始前 stages.mjs 会写 item.progress = { beat, step },失败/超时时据此说清卡在哪
   item.progress = {};
-  return withTimeout(handler(item), STAGE_TIMEOUT_MS, item.kind, item);
+  // 调用记录的上下文挂在这一次执行上:这期间的每个 LLM/看图/配音请求都记得自己属于谁
+  return withCallContext(item, () => withTimeout(handler(item), STAGE_TIMEOUT_MS, item.kind, item));
 }
 
 async function tick() {
@@ -157,6 +159,7 @@ async function tick() {
         }
       } finally {
         inflight.delete(item.stageId);
+        flushCalls(postCalls);
       }
     })();
   }
@@ -174,5 +177,6 @@ async function main() {
   }
   tick();
   setInterval(tick, POLL_MS);
+  setInterval(() => flushCalls(postCalls), 15000);
 }
 main();

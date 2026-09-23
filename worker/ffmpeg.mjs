@@ -66,6 +66,16 @@ export async function ffmpegOut(args) {
   }
 }
 
+// 拿 ffmpeg 的原始输出(比如灰度小图的像素),给死帧质检用
+export async function ffmpegRaw(args) {
+  try {
+    const { stdout } = await run(FF, ["-nostdin", "-v", "error", ...args], { maxBuffer: 256 * 1024 * 1024, encoding: "buffer" });
+    return stdout;
+  } catch (e) {
+    throw concise(e, "ffmpeg");
+  }
+}
+
 // ── 磁盘水位 ──────────────────────────────────────────────────────────
 // 渲染前就要知道盘够不够,而不是渲到一半 ENOSPC 挂掉、留下半截文件。
 export function freeGB(dir) {

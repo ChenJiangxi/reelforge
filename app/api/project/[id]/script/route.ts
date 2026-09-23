@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requeue } from "@/lib/rerun";
 import type { Decision } from "@/lib/stages";
+import { recordServerCall } from "@/lib/calls";
 
 // POST /api/project/[id]/script { narration } — she edits the script text
 // directly (chatcut 的"改文字就剪视频"). We re-segment HER EXACT TEXT into
@@ -61,6 +62,18 @@ ${text}`,
     });
     const j = await r.json().catch(() => ({}));
     const raw = j.choices?.[0]?.message?.content ?? "";
+    recordServerCall({
+      projectId: id,
+      stage: "script",
+      step: "按你改的稿切拍",
+      kind: "llm",
+      model: process.env.LLM_MODEL || "deepseek/deepseek-v3.2",
+      status: r.ok && raw ? "ok" : "error",
+      httpStatus: r.status,
+      request: { messages: [{ role: "user", content: text.slice(0, 20000) }] },
+      response: raw || JSON.stringify(j).slice(0, 2000),
+      usage: j.usage,
+    });
     const m = raw.match(/\{[\s\S]*\}/);
     try {
       clips = m ? JSON.parse(m[0]).clips : null;

@@ -1,0 +1,84 @@
+{
+ "source": "Mixkit Free Sound Effects",
+ "source_url": "https://mixkit.co/free-sound-effects/",
+ "license": "Mixkit Sound Effects Free License",
+ "license_url": "https://mixkit.co/license/",
+ "note": "清单拷自 MuseDock assets/sfx/library.json;音频文件本身不进仓库(授权不许单独分发),跑 node worker/sfx/fetch.mjs 取到本机",
+ "items": [
+  {
+   "id": "mixkit-whoosh-fast-transition",
+   "title": "Fast whoosh transition",
+   "file": "mixkit-whoosh-fast-transition.wav",
+   "tags": [
+    "whoosh",
+    "transition",
+    "text_in",
+    "fast"
+   ],
+   "download_url": "https://assets.mixkit.co/active_storage/sfx/1490/1490.wav",
+   "duration_sec": 1.756712,
+   "default_volume_db": -16,
+   "sha256": "2f914dcec1276107b888557e2e33043396cff10adad9e7b6f6adf93cc011c08b"
+  },
+  {
+   "id": "mixkit-whoosh-cinematic-fast",
+   "title": "Cinematic whoosh fast transition",
+   "file": "mixkit-whoosh-cinematic-fast.wav",
+   "tags": [
+    "whoosh",
+    "transition",
+    "cinematic",
+    "fast"
+   ],
+   "download_url": "https://assets.mixkit.co/active_storage/sfx/1492/1492.wav",
+   "duration_sec": 1.334127,
+   "default_volume_db": -18,
+   "sha256": "02b8cd40b3761288d54f4d6706983a2f8c110182b669ae2cdf9aab02935a4e7a"
+  },
+  {
+   "id": "mixkit-swoosh-fast-transition",
+   "title": "Fast transitions swoosh",
+   "file": "mixkit-swoosh-fast-transition.wav",
+   "tags": [
+    "swoosh",
+    "transition",
+    "text_in",
+    "fast"
+   ],
+   "download_url": "https://assets.mixkit.co/active_storage/sfx/3115/3115.wav",
+   "duration_sec": 0.573968,
+   "default_volume_db": -16,
+   "sha256": "5b2178b9362306ab0febfd4884abb2b084651cc1c32b4af47fbb3a62578414cd"
+  },
+  {
+   "id": "mixkit-pop-explainer-light",
+   "title": "Explainer video pops whoosh light pop",
+   "file": "mixkit-pop-explainer-light.wav",
+   "tags": [
+    "pop",
+    "whoosh",
+    "explainer",
+    "text_in"
+   ],
+   "download_url": "https://assets.mixkit.co/active_storage/sfx/3005/3005.wav",
+   "duration_sec": 0.180091,
+   "default_volume_db": -18,
+   "sha256": "2ae8c9395cb02fec01d1c24ba85e2251adde5a57b34ca890247d2ecd5bc12a83"
+  },
+  {
+   "id": "mixkit-paper-pencil-write",
+   "title": "Writing pencil",
+   "file": "mixkit-paper-pencil-write.wav",
+   "tags": [
+    "paper",
+    "write",
+    "pencil",
+    "underline"
+   ],
+   "download_url": "https://assets.mixkit.co/active_storage/sfx/3194/3194.wav",
+   "duration_sec": 1.868231,
+   "default_volume_db": -20,
+   "sha256": "3698a52a1c74fb10c1a46bc01b407632ab65b0bced8bb8ba7f8bf5af3b2291a4"
+  }
+ ]
+}

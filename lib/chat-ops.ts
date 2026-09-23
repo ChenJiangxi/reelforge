@@ -3,6 +3,7 @@
 // natural-language ops on that clip list, then downstream stages regenerate.
 
 import type { Overrides } from "@/lib/stages";
+import { recordServerCall } from "@/lib/calls";
 
 export type Say = { speed?: number; pitch?: number; emotion?: string; gap_after?: number };
 export type Clip = {
@@ -34,7 +35,9 @@ export async function parseChat(
   awaiting?: { kind: string; label: string } | null,
   assets?: { name: string; kind: string }[],
   stateCtx?: string,
+  projectId?: string,
 ): Promise<ParsedChat> {
+  const t0 = Date.now();
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) {
     return { ops: [], reply: "服务器还没配 LLM key,这条我先记下了,暂时没法自动改。" };
@@ -104,6 +107,21 @@ ${stateCtx || "(还没有素材产物)"}
   });
   const j = await r.json().catch(() => ({}));
   const text: string | undefined = j.choices?.[0]?.message?.content;
+  if (projectId) {
+    recordServerCall({
+      projectId,
+      stage: "chat",
+      step: "解析聊天",
+      kind: "llm",
+      model: MODEL,
+      status: r.ok && text ? "ok" : "error",
+      httpStatus: r.status,
+      durationMs: Date.now() - t0,
+      request: { messages: [{ role: "user", content: userText }] },
+      response: text ?? JSON.stringify(j).slice(0, 2000),
+      usage: j.usage,
+    });
+  }
   if (!r.ok || !text) throw new Error(`LLM ${r.status}`);
   const m = text.match(/\{[\s\S]*\}/);
   if (!m) return { ops: [{ action: "reply", text }], reply: text };
