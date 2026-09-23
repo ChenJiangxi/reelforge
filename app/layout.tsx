@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { prisma } from "@/lib/db";
 import { isAuthed } from "@/lib/auth";
 import { LiveRefresh } from "@/components/LiveRefresh";
+import { WorkerBanner } from "@/components/WorkerBanner";
 import { AppShell } from "@/components/AppShell";
 import { ProjectNav } from "@/components/ProjectNav";
 
@@ -28,6 +29,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="zh">
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         {authed && <LiveRefresh />}
+        {authed && <WorkerBanner />}
         {/* mobile top bar */}
         <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-border bg-card/90 px-4 py-3 backdrop-blur md:hidden">
           <Link href="/" className="shrink-0 text-[15px] font-bold tracking-tight">

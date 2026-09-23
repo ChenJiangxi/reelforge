@@ -34,7 +34,7 @@ export function AssetBar({ projectId, assets, compact = false }: { projectId: st
                 key={a.name}
                 draggable
                 onDragStart={(e) => e.dataTransfer.setData("application/x-rf-asset", a.name)}
-                title={`拖到某拍上:${a.name}`}
+                title={`拖到下面时间轴的画面轨上插入:${a.name}`}
                 className="flex h-6 cursor-grab items-center rounded bg-muted px-1.5 text-[10px] text-foreground/80 hover:ring-1 hover:ring-accent/50"
               >
                 🎬
@@ -45,7 +45,7 @@ export function AssetBar({ projectId, assets, compact = false }: { projectId: st
                 key={a.name}
                 src={a.url}
                 alt={a.name}
-                title={`拖到某拍上:${a.name}`}
+                title={`拖到下面时间轴的画面轨上插入:${a.name}`}
                 draggable
                 onDragStart={(e) => e.dataTransfer.setData("application/x-rf-asset", a.name)}
                 className="h-6 w-auto cursor-grab rounded border border-border hover:ring-1 hover:ring-accent/50"

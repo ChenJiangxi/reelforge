@@ -6,6 +6,9 @@ import { stageLabel, type Artifacts, type Comment } from "@/lib/stages";
 import { DecisionList, type BeatInfo, type DecisionSet } from "@/components/DecisionList";
 import { RerunForm } from "@/components/RerunForm";
 import { CallLog } from "@/components/CallLog";
+import { useStatus } from "@/components/useStatus";
+import { Timeline, type TlBeat, type TlInsert } from "@/components/Timeline";
+import { VersionButton, VersionView } from "@/components/Versions";
 
 export type ClipThumb = {
   name: string;
@@ -92,6 +95,9 @@ export function PreviewPane({
   onSelect,
   projectId,
   rerunRequest,
+  tlBeats = [],
+  tlInserts = [],
+  voiceTotal = 0,
 }: {
   stages: StageView[];
   clips: ClipThumb[];
@@ -103,12 +109,16 @@ export function PreviewPane({
   onSelect: (id: string | null) => void;
   projectId: string;
   rerunRequest?: RerunRequest | null;
+  tlBeats?: TlBeat[];
+  tlInserts?: TlInsert[];
+  voiceTotal?: number;
 }) {
   const vertical = aspect !== "16:9";
   const { over, dropProps } = useAssign(projectId);
   const [rerun, setRerun] = useState<{ stageId: string; note: string; allowSwitch: boolean } | null>(null);
   const [activeBeat, setActiveBeat] = useState<string | null>(null);
   const [callsFor, setCallsFor] = useState<string | null>(null); // 打开了哪个阶段的调用记录
+  const [viewV, setViewV] = useState<{ stageId: string; v: number } | null>(null); // 在看哪一步的哪个旧版
   const awaiting = stages.find((s) => s.status === "awaiting_review");
   const withVideo = [...stages].reverse().find((s) => s.artifacts.video);
   const working = stages.find((s) => s.status === "working");
@@ -185,6 +195,13 @@ export function PreviewPane({
               重做这一步
             </button>
           )}
+          {(view.artifacts.history?.length ?? 0) > 1 && (
+            <VersionButton
+              history={view.artifacts.history!}
+              viewing={viewV?.stageId === view.id ? viewV.v : null}
+              onPick={(v) => setViewV(v == null ? null : { stageId: view.id, v })}
+            />
+          )}
           {view.kind && view.status !== "pending" && (
             <button
               onClick={() => setCallsFor(callsFor === view.kind ? null : view.kind)}
@@ -207,7 +224,11 @@ export function PreviewPane({
         </div>
       </div>
 
-      {callsFor === view.kind ? (
+      {viewV?.stageId === view.id && view.artifacts.history ? (
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <VersionView stageId={view.id} kind={view.kind} history={view.artifacts.history} v={viewV.v} vertical={vertical} onClose={() => setViewV(null)} />
+        </div>
+      ) : callsFor === view.kind ? (
         <div className="min-h-0 flex-1 overflow-hidden">
           <CallLog key={view.kind} projectId={projectId} stage={view.kind} onClose={() => setCallsFor(null)} />
         </div>
@@ -243,8 +264,8 @@ export function PreviewPane({
       </div>
       )}
 
-      {showTracks && !openRerun && (
-        <Tracks clips={clips} wave={wave} audio={audio} subs={subs} vertical={vertical} dropProps={dropProps} over={over} />
+      {showTracks && !openRerun && tlBeats.length > 0 && (
+        <Timeline projectId={projectId} beats={tlBeats} inserts={tlInserts} wave={wave} voiceTotal={voiceTotal} subs={subs} />
       )}
 
       {openRerun ? (
@@ -362,12 +383,7 @@ function StageArtifact({
     );
   }
   if (stage.status === "working") {
-    return (
-      <div className="flex h-full items-center justify-center py-16 text-center text-sm text-muted-foreground">
-        <span className="mr-2 inline-block size-2 animate-pulse rounded-full bg-accent" />
-        agent 正在做「{stageLabel(stage.kind)}」…
-      </div>
-    );
+    return <WorkingProgress stage={stage} projectId={projectId} />;
   }
 
   const events = stage.comments.filter((c) => c.decision !== "queued").slice(-6);
@@ -798,6 +814,30 @@ function VideoWithBeatRail({
     }
   };
   const lastBeat = useRef<string | null>(null);
+  // 和时间轴联动:播放时把当前时间广播出去(播放头跟着走);时间轴上点哪,这里跳哪
+  useEffect(() => {
+    const v = videoRef.current;
+    let raf = 0;
+    const loop = () => {
+      if (v) window.dispatchEvent(new CustomEvent("rf-time", { detail: v.currentTime }));
+      if (v && !v.paused) raf = requestAnimationFrame(loop);
+    };
+    const onPlay = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(loop); };
+    const onSeek = (e: Event) => {
+      if (!v) return;
+      v.currentTime = (e as CustomEvent<number>).detail;
+      window.dispatchEvent(new CustomEvent("rf-time", { detail: v.currentTime }));
+    };
+    v?.addEventListener("play", onPlay);
+    v?.addEventListener("seeked", loop);
+    window.addEventListener("rf-seek", onSeek);
+    return () => {
+      cancelAnimationFrame(raf);
+      v?.removeEventListener("play", onPlay);
+      v?.removeEventListener("seeked", loop);
+      window.removeEventListener("rf-seek", onSeek);
+    };
+  }, [stage.artifacts.video]);
   const onTime = () => {
     const v = videoRef.current;
     if (!v || !clips.length) return;
@@ -833,94 +873,6 @@ function VideoWithBeatRail({
       >
         {decisionPanel}
       </div>
-    </div>
-  );
-}
-
-// ── tracks (cut view only) ──
-
-function Tracks({
-  clips,
-  wave,
-  audio,
-  subs = [],
-  vertical,
-  dropProps,
-  over,
-}: {
-  clips: ClipThumb[];
-  wave?: string;
-  audio?: string;
-  subs?: { text: string; start: number; end: number }[];
-  vertical: boolean;
-  dropProps?: (clip: string) => Record<string, unknown>;
-  over?: string | null;
-}) {
-  const total = subs.length ? Math.max(...subs.map((s) => s.end)) : 0;
-  return (
-    <div className="space-y-2 border-t border-border/70 p-3">
-      {clips.some((c) => c.image) && (
-        <div className="flex items-stretch gap-2">
-          <div className="flex w-10 shrink-0 flex-col items-center justify-center font-mono text-[10px] text-muted-foreground">
-            画面
-          </div>
-          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
-            {clips.map((c, i) => (
-              <div
-                key={c.name}
-                {...(dropProps ? dropProps(c.name) : {})}
-                className={`relative shrink-0 overflow-hidden rounded-md border ${over === c.name ? "border-accent ring-2 ring-accent/40" : "border-border"}`}
-                title={c.text}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={c.image} alt={c.name} className={`w-auto object-cover ${vertical ? "h-24" : "h-20"}`} />
-                <span className="absolute left-1 top-1 rounded bg-black/65 px-1 font-mono text-[10px] text-white">
-                  {i + 1}
-                </span>
-                {c.dur != null && (
-                  <span className="absolute bottom-1 right-1 rounded bg-black/65 px-1 font-mono text-[10px] text-white">
-                    {c.dur.toFixed(1)}s
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {wave && (
-        <div className="flex items-center gap-2">
-          <div className="flex h-10 w-10 shrink-0 flex-col items-center justify-center font-mono text-[10px] text-muted-foreground">
-            配音
-          </div>
-          <button
-            onClick={() => audio && new Audio(audio).play()}
-            className="relative h-10 min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-muted/60 text-left"
-            title="点击播放配音"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={wave} alt="配音波形" className="h-full w-full object-fill opacity-90" />
-          </button>
-        </div>
-      )}
-      {subs.length > 0 && (
-        <div className="flex items-center gap-2">
-          <div className="flex h-10 w-10 shrink-0 flex-col items-center justify-center font-mono text-[10px] text-muted-foreground">
-            字幕
-          </div>
-          <div className="relative h-10 min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-muted/60">
-            {subs.map((s, i) => (
-              <div
-                key={i}
-                title={s.text}
-                className="absolute top-1.5 flex h-7 items-center overflow-hidden rounded-sm bg-accent/15 px-1 text-[10px] text-accent"
-                style={{ left: `${(s.start / total) * 100}%`, width: `${((s.end - s.start) / total) * 100}%` }}
-              >
-                <span className="truncate">{s.text}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -964,6 +916,53 @@ function GateBar({ stageId, onDone, onReject }: { stageId: string; onDone: () =>
           打回前会列出哪些阶段跟着重出
         </span>
       </div>
+    </div>
+  );
+}
+
+// ── 制作中:实时进度(渲染机每 5 秒心跳带来的)──
+function WorkingProgress({ stage, projectId }: { stage: StageView; projectId: string }) {
+  const st = useStatus(projectId, true);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const job = st?.jobs.find((j) => j.stageId === stage.id);
+  const idx = job?.beat ? Number(job.beat.replace(/^c/, "")) : null;
+  const elapsed = job?.startedAt ? Math.max(0, Math.round((now - job.startedAt) / 1000)) : null;
+  const up = job?.upload && job.upload.total ? job.upload : null;
+  const pct = up ? Math.round((up.sent / up.total) * 100) : null;
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 py-16 text-center text-sm text-muted-foreground">
+      <div>
+        <span className="mr-2 inline-block size-2 animate-pulse rounded-full bg-accent" />
+        正在做「{stageLabel(stage.kind)}」
+        {elapsed != null && <span className="ml-1 font-mono text-xs">· 已经 {elapsed >= 60 ? `${Math.floor(elapsed / 60)} 分 ${elapsed % 60} 秒` : `${elapsed} 秒`}</span>}
+      </div>
+      {job ? (
+        <div className="text-foreground/85">
+          {idx != null && job.total ? `第 ${idx}/${job.total} 拍(${job.beat})· ` : job.beat ? `${job.beat} · ` : ""}
+          {job.step ?? "准备中"}
+        </div>
+      ) : st && !st.worker.online ? (
+        <div className="text-destructive">渲染机现在不在线,进度看不到(见页面顶上的提示)</div>
+      ) : (
+        <div>等渲染机报进度…</div>
+      )}
+      {up && (
+        <div className="mt-1 w-64">
+          <div className="mb-1 flex justify-between font-mono text-[11px]">
+            <span>{up.label}</span>
+            <span>
+              {pct}% · {(up.sent / 1048576).toFixed(1)}/{(up.total / 1048576).toFixed(1)} MB
+            </span>
+          </div>
+          <div className="h-1 overflow-hidden rounded-full bg-muted">
+            <div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

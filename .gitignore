@@ -46,6 +46,6 @@ next-env.d.ts
 /data/
 
 # 本机生成的,不进仓库:手绘用的 Python 环境、从系统字体包抽出的字体(苹果授权)、Mixkit 音效(授权不许单独分发)
-worker/py/.venv/
+worker/py/.venv
 worker/fonts/
 worker/sfx/*.wav

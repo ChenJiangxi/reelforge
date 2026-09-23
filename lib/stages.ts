@@ -147,7 +147,7 @@ export type Artifacts = {
   note?: string;
   caption?: { title: string; hashtags: string[]; desc: string };
   images?: string[];
-  clips?: { name: string; text: string; visual?: string; asset?: string; overrides?: Overrides }[];
+  clips?: { name: string; text: string; visual?: string; asset?: string; overrides?: Overrides; inserts?: Insert[] }[];
   cards?: {
     name: string; text?: string; type?: string; kicker?: string; big?: string; sub?: string; foot?: string;
     anim?: string; asset?: string; visualRev?: number;
@@ -164,6 +164,14 @@ export type Artifacts = {
   topic?: { angle?: string; hook?: string; claims?: string[]; avoid?: string[]; title?: string };
   decisions?: Decision[];
   failure?: Failure;
+  /** 剪辑阶段:每拍在成片里的开始、念多久、后面停多久 */
+  timeline?: { name: string; start: number; dur: number; gap: number }[];
+  /** 剪辑阶段:插入的素材实际落在成片的哪段 */
+  inserts?: { id: string; asset: string; kind: string; mode: string; beat: string; start: number; end: number }[];
+  /** 720p 审核预览(高清版在渲染机上) */
+  preview?: boolean;
+  /** 这一步的版本历史(最多 6 版,见 lib/versions.ts) */
+  history?: Version[];
 };
 
 /** 阶段的事件记录。decision: approve | comment | reject(她写的批注,worker 照着改)
@@ -198,6 +206,24 @@ export type Overrides = {
   camera?: string;
   /** 这一拍画成手绘图解(on)或不画(off);不设 = 默认前两个关系图/流程卡画 */
   draw?: "on" | "off";
+  /** 这一拍念完之后停多久(秒),时间轴上拖两拍之间的缝 */
+  gap?: number;
+};
+
+/** 时间轴上插入的素材(存在脚本阶段 clips[i].inserts,跟着这一拍走)。
+ *  overlay = 从念到某个字开始盖在原画面上;gap = 放在这拍后面拉长的停顿里(纯画面,不念台词)。 */
+export type Insert = {
+  id: string;
+  asset: string;
+  kind: "overlay" | "gap";
+  mode: "full" | "pip";
+  dur: number;
+  /** 从哪个字开始(这拍台词去掉标点后的第几个字 + 从那儿起的几个字),配音变了跟着字走 */
+  anchor?: { charIdx: number; text: string };
+  /** 找不到那个字时退回的位置:这拍开头往后几秒 */
+  offset?: number;
+  /** 从素材第几秒开始用 */
+  from?: number;
 };
 
 /** 整条片的剪辑设置(存在脚本阶段 artifacts.editSettings) */
@@ -210,6 +236,7 @@ export const OVERRIDE_LABELS: Record<keyof Overrides, string> = {
   from: "起点",
   camera: "运镜",
   draw: "手绘",
+  gap: "停顿",
 };
 export const DRAW_LABELS: Record<string, string> = { on: "画成手绘", off: "不手绘" };
 
@@ -241,6 +268,7 @@ export function describeOverride(key: keyof Overrides, v: unknown): string {
   if (key === "fill") return FILL_LABELS[String(v)] ?? String(v);
   if (key === "camera") return CAMERA_LABELS[String(v)] ?? String(v);
   if (key === "draw") return DRAW_LABELS[String(v)] ?? String(v);
+  if (key === "gap") return `句尾停 ${Number(v).toFixed(2)} 秒`;
   if (key === "slow") {
     const n = Number(v);
     return Math.abs(n - 1) < 0.01 ? "原速" : n > 1 ? `放慢到 ${n.toFixed(2)} 倍长` : `加速 ${(1 / n).toFixed(2)}x`;
@@ -255,3 +283,23 @@ export type Failure = {
   /** 失败那次正在处理的打回批注 —— 重试时接着处理 */
   note?: string;
 };
+
+/** 一步的某一版(lib/versions.ts 写,界面上「版本」读) */
+export type Version = {
+  v: number;
+  ts: number;
+  reason: string;
+  video?: string;
+  audio?: string;
+  wave?: string;
+  cover?: string;
+  caption?: { title: string; hashtags: string[]; desc: string };
+  script?: string;
+  clips?: unknown[];
+  warn: number;
+  decisions: number;
+  settings?: { perClip: Record<string, { overrides?: unknown; inserts?: unknown }>; editSettings?: unknown };
+};
+
+/** 能退回旧版的步骤:剪辑(放回当时参数重剪)、脚本、字幕、润色、交付。配音和素材的中间文件会被覆盖,只能看 */
+export const RESTORABLE = new Set(["edit", "script", "subtitles", "polish", "deliver"]);

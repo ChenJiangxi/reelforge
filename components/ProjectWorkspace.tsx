@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { ChatPanel, type ChatMessage } from "@/components/ChatPanel";
 import { PreviewPane, type ClipThumb, type RerunRequest, type StageView } from "@/components/PreviewPane";
+import type { TlBeat, TlInsert } from "@/components/Timeline";
 import { stageLabel } from "@/lib/stages";
 
 const DOT: Record<string, string> = {
@@ -32,6 +33,9 @@ export function ProjectWorkspace({
   audio,
   wave,
   subs = [],
+  tlBeats = [],
+  tlInserts = [],
+  voiceTotal = 0,
 }: {
   projectId: string;
   stages: StageView[];
@@ -41,6 +45,9 @@ export function ProjectWorkspace({
   audio?: string;
   wave?: string;
   subs?: { text: string; start: number; end: number }[];
+  tlBeats?: TlBeat[];
+  tlInserts?: TlInsert[];
+  voiceTotal?: number;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 聊天里说了"重做 XX":LLM 猜的阶段只用来打开右边的重做表,她确认了才执行
@@ -137,6 +144,9 @@ export function ProjectWorkspace({
             onSelect={setSelectedId}
             projectId={projectId}
             rerunRequest={rerunRequest}
+            tlBeats={tlBeats}
+            tlInserts={tlInserts}
+            voiceTotal={voiceTotal}
           />
         </div>
       </div>

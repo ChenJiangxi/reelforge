@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { checkWorkerAuth } from "@/lib/worker-auth";
 import { stageLabel, type Failure } from "@/lib/stages";
 import { pushEvent, requeue } from "@/lib/rerun";
+import { pushVersion } from "@/lib/versions";
 
 // POST /api/worker/submit { stageId, status, artifacts? }
 // status = awaiting_review: work done, artifacts merged over the existing ones
@@ -40,9 +41,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, stale: true });
   }
 
-  let merged = stage.artifacts ? JSON.parse(stage.artifacts) : {};
+  const prev = stage.artifacts ? JSON.parse(stage.artifacts) : {};
+  let merged = { ...prev };
   if (artifacts && typeof artifacts === "object") merged = { ...merged, ...artifacts };
-  if (status === "awaiting_review") delete merged.failure;
+  if (status === "awaiting_review") {
+    delete merged.failure;
+    // 版本历史:这一版记进去(剪辑顺带记下当时每拍的参数,退回就靠它)
+    const comments = stage.comments ? JSON.parse(stage.comments) : [];
+    const scriptStage = stage.kind === "edit" ? await prisma.stage.findFirst({ where: { projectId: stage.projectId, kind: "script" } }) : null;
+    merged.history = pushVersion({
+      projectId: stage.projectId,
+      kind: stage.kind,
+      prev,
+      next: merged,
+      prevTs: stage.updatedAt.getTime(),
+      comments,
+      script: scriptStage?.artifacts ? JSON.parse(scriptStage.artifacts) : undefined,
+    });
+  }
 
   await prisma.stage.update({
     where: { id: stageId },

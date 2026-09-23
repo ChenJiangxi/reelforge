@@ -5,6 +5,8 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { ProjectWorkspace } from "@/components/ProjectWorkspace";
 import { AssetBar, type Asset } from "@/components/AssetBar";
 import { projectAssets } from "@/lib/media";
+import { beatTimeline, insertSpans } from "@/lib/timeline";
+import type { TlBeat, TlInsert } from "@/components/Timeline";
 import type { ClipThumb, StageView } from "@/components/PreviewPane";
 import type { Artifacts, Comment } from "@/lib/stages";
 import { ASPECT_OPTIONS, voiceLabel } from "@/lib/stages";
@@ -56,15 +58,37 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     if (!card) return undefined;
     return card.anim ? "anim" : "card";
   };
-  const clips: ClipThumb[] = (script.clips ?? []).map((c, i) => ({
+  // 时间轴:剪辑跑过且设置没变就用它的;否则按配音 + 现在的停顿/插入设置算(改了立刻看得到)
+  const voiceClips = voice.voiceMeta?.clips ?? [];
+  const scriptClips = script.clips ?? [];
+  const editArt = artOf("edit");
+  const tl = beatTimeline(voiceClips, editArt, scriptClips);
+  const tlOf = new Map(tl.map((b) => [b.name, b]));
+  const clips: ClipThumb[] = scriptClips.map((c, i) => ({
     name: c.name,
     text: c.text,
     image: footage.images?.[i],
-    dur: voice.voiceMeta?.clips?.[i]?.dur,
-    gap: voice.voiceMeta?.clips?.[i]?.gap,
+    dur: tlOf.get(c.name)?.dur ?? voiceClips[i]?.dur,
+    gap: tlOf.get(c.name)?.gap ?? voiceClips[i]?.gap,
     kind: kindOf(c.name, c.asset),
     overrides: c.overrides,
   }));
+  const voiceStarts = voiceClips.reduce<number[]>((acc, v, i) => [...acc, i ? acc[i - 1] + voiceClips[i - 1].dur + (voiceClips[i - 1].gap ?? 0.18) : 0], []);
+  const vAt = voiceClips.length ? voiceStarts[voiceStarts.length - 1] + voiceClips[voiceClips.length - 1].dur + (voiceClips[voiceClips.length - 1].gap ?? 0.18) : 0;
+  const tlBeats: TlBeat[] = tl.map((b, i) => {
+    const c = scriptClips.find((x) => x.name === b.name);
+    const baseGap = c?.overrides?.gap ?? voiceClips[i]?.gap ?? 0.18;
+    return { ...b, text: c?.text ?? "", image: footage.images?.[i], baseGap, gapOverridden: c?.overrides?.gap != null, voiceStart: voiceStarts[i] ?? 0 };
+  });
+  // 插入:剪辑已经按现在的设置渲过就用它算出来的真实位置;刚改、还没重剪的标成"等重剪"
+  const spans = insertSpans(tl, voiceClips, scriptClips);
+  const rendered = new Map((editArt.inserts ?? []).map((x) => [x.id, x]));
+  const tlInserts: TlInsert[] = spans.map((x) => {
+    const r = rendered.get(x.id);
+    return r
+      ? { id: x.id, asset: x.asset, kind: x.kind, mode: x.mode, clip: x.clip, start: r.start, end: r.end }
+      : { id: x.id, asset: x.asset, kind: x.kind, mode: x.mode, clip: x.clip, start: x.start, end: x.end, pending: true };
+  });
 
   return (
     <div className="project-shell max-w-[1600px]">
@@ -91,6 +115,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         audio={voice.audio}
         wave={voice.wave}
         subs={subs}
+        tlBeats={tlBeats}
+        tlInserts={tlInserts}
+        voiceTotal={vAt}
       />
     </div>
   );

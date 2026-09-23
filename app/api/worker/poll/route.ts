@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { checkWorkerAuth } from "@/lib/worker-auth";
 import { projectAssets } from "@/lib/media";
+import { workerSeen } from "@/lib/worker-state";
 import type { Comment } from "@/lib/stages";
 
 // GET /api/worker/poll — stages the worker may claim:
@@ -10,6 +11,7 @@ import type { Comment } from "@/lib/stages";
 export async function GET(req: NextRequest) {
   const denied = checkWorkerAuth(req);
   if (denied) return denied;
+  workerSeen();
 
   const candidates = await prisma.stage.findMany({
     where: { status: { in: ["pending", "changes_requested"] } },

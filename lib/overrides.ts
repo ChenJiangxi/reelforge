@@ -6,7 +6,7 @@ import type { OverrideChange } from "@/lib/direct-edit";
 // 剪辑参数覆盖:存在脚本阶段 clips[i].overrides(跟着这一拍走,插句删句重新编号也不丢),
 // 只重跑剪辑(字幕/润色烧在剪辑上,锁死跟着走)。网页上的开关和聊天直通车都走这里。
 
-const KEYS: (keyof Overrides)[] = ["fit", "slow", "fill", "from", "camera", "draw"];
+const KEYS: (keyof Overrides)[] = ["fit", "slow", "fill", "from", "camera", "draw", "gap"];
 
 function clean(set: Overrides): Overrides {
   const out: Overrides = {};
@@ -16,6 +16,7 @@ function clean(set: Overrides): Overrides {
   if (set.from != null && Number.isFinite(Number(set.from))) out.from = Math.min(600, Math.max(0, Math.round(Number(set.from) * 10) / 10));
   if (set.camera && String(set.camera) in CAMERA_LABELS) out.camera = String(set.camera);
   if (set.draw === "on" || set.draw === "off") out.draw = set.draw;
+  if (set.gap != null && Number.isFinite(Number(set.gap))) out.gap = Math.min(3, Math.max(0.05, Math.round(Number(set.gap) * 100) / 100));
   return out;
 }
 

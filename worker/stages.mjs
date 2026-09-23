@@ -9,7 +9,7 @@ import { ffmpeg, ffprobeDur, ffprobeInfo, ffmpegOut, ffmpegRaw, ensureDisk } fro
 import { upload, downloadCached } from "./board.mjs";
 import { startCall, endCall } from "./calls.mjs";
 import { cached, fileSha } from "./segcache.mjs";
-import { planReveal } from "./reveal.mjs";
+import { planReveal, spokenIndex } from "./reveal.mjs";
 import { drawCard, drawReady, DRAWABLE } from "./draw.mjs";
 import { detectRegions, planFocus, focusZoompan } from "./focus.mjs";
 import { planSfx, renderSfxTrack, sfxReady } from "./sfx.mjs";
@@ -35,6 +35,61 @@ function mark(item, beat, step) {
   if (!item.progress) return;
   item.progress.beat = beat || undefined;
   item.progress.step = step || undefined;
+}
+
+// 上传并把进度写进 item.progress.upload —— 心跳会把它带给网页("上传成片 60%")
+async function uploadP(item, path, name, label = "上传") {
+  if (item.progress) item.progress.upload = { label, sent: 0, total: 0 };
+  try {
+    return await upload(item.projectId, path, name, 1, (sent, total) => {
+      if (item.progress) item.progress.upload = { label, sent, total };
+    });
+  } finally {
+    if (item.progress) item.progress.upload = null;
+  }
+}
+
+// 带版本的文件名:同名覆盖会让旧版的链接指到新内容上,"版本"就看不了旧的了
+const stamp = () => Date.now().toString(36);
+
+// 审核用的小文件:上行只有 ~80KB/s,1080p 成片 19MB 要传 4 分钟;720p、码率压低之后约 1/5。
+// 高清版留在渲染机上(下一步直接用),到润色阶段才整条传一次。
+async function makePreview(src, out, aspect) {
+  const [pw, ph] = aspect === "16:9" ? [1280, 720] : aspect === "3:4" ? [720, 960] : [720, 1280];
+  await ffmpeg(["-i", src, "-vf", `scale=${pw}:${ph}:flags=bicubic`, "-c:v", "libx264", "-crf", "28", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", out]);
+  return out;
+}
+
+// 高清母版按内容哈希存成 master-<sha>.mp4(下一步凭哈希认领,旧版本留最近 4 份,版本对比/退回用得上)
+async function keepMaster(file, dir, prefix) {
+  const { fileSha } = await import("./segcache.mjs");
+  const sha = await fileSha(file);
+  const dest = join(dir, `${prefix}-master-${sha.slice(0, 12)}.mp4`);
+  const { renameSync, statSync, unlinkSync } = await import("node:fs");
+  renameSync(file, dest);
+  const old = readdirSafe(dir)
+    .filter((f) => f.startsWith(`${prefix}-master-`) && f.endsWith(".mp4"))
+    .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.t - a.t)
+    .slice(4);
+  for (const o of old) unlinkSync(join(dir, o.f));
+  return { path: dest, sha, bytes: statSync(dest).size };
+}
+
+/** 上一步留在本机的高清母版;找不到(换了机器/被清理)就退回下载预览,并说明画质会差 */
+async function localMaster(item, up, dir, name) {
+  const { fileSha } = await import("./segcache.mjs");
+  const m = up?.master;
+  if (m?.path && existsSync(m.path)) {
+    try {
+      if ((await fileSha(m.path)) === m.sha) return { path: m.path, fromPreview: false };
+    } catch {
+      /* 读不了就下载 */
+    }
+  }
+  if (!up?.video) throw new Error("上一步没有视频");
+  mark(item, null, "下载上一步的视频");
+  return { path: await downloadCached(up.video, join(dir, name)), fromPreview: !!up.preview };
 }
 
 // 产物 URL 上的 ?v=<毫秒时间戳> 就是它的版本 —— 清单里写明下游吃的是哪一版上游
@@ -729,10 +784,10 @@ async function renderTake(item, staged, dir, tag, fileBase, takeSay) {
   const filters = meta.map((m, i) => `[${i}:a]aresample=44100,atrim=${(m.head ?? 0).toFixed(3)}:${((m.head ?? 0) + m.dur).toFixed(3)},asetpts=PTS-STARTPTS,apad=pad_dur=${m.gap.toFixed(3)}[a${i}]`).join(";");
   const concat = meta.map((_, i) => `[a${i}]`).join("") + `concat=n=${meta.length}:v=0:a=1[a]`;
   await ffmpeg([...inputs, "-filter_complex", filters + ";" + concat, "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "4", preview]);
-  const { url } = await upload(item.projectId, preview, `${fileBase}.mp3`);
+  const { url } = await uploadP(item, preview, `${fileBase}-${stamp()}.mp3`, "上传配音");
   const wave = join(dir, `${fileBase}-wave.png`);
   await ffmpeg(["-i", preview, "-filter_complex", "showwavespic=s=1800x140:colors=#e8622c", "-frames:v", "1", wave]);
-  const { url: waveUrl } = await upload(item.projectId, wave, `${fileBase}-wave.png`);
+  const { url: waveUrl } = await upload(item.projectId, wave, `${fileBase}-wave-${stamp()}.png`);
   const total = meta.reduce((n, m) => n + m.dur + m.gap, 0);
   return { url, waveUrl, total, meta };
 }
@@ -847,18 +902,20 @@ async function ensureInputs(item) {
   for (let i = 0; i < cardsMeta.length; i++) {
     const cm = cardsMeta[i];
     mark(item, cm.name, "下载画面");
-    const overrides = scriptClips.find((c) => c.name === cm.name)?.overrides || {};
+    const sc = scriptClips.find((c) => c.name === cm.name);
+    const overrides = sc?.overrides || {};
+    const inserts = Array.isArray(sc?.inserts) ? sc.inserts : [];
     if (cm.anim) {
       const p = await downloadCached(cm.anim, join(cardsDir, `${cm.name}.webm`));
-      visuals.push({ kind: "anim", source: "anim", path: p, overrides });
+      visuals.push({ kind: "anim", source: "anim", path: p, overrides, inserts });
     } else if (cm.asset) {
       const asset = assets.find((a) => a.name === cm.asset);
       if (!asset) throw new Error(`素材「${cm.asset}」不在素材库里(可能被删了)`);
       const p = await downloadCached(asset.url, join(assetsDir, cm.asset));
-      visuals.push({ kind: asset.kind, source: asset.kind === "video" ? "asset-video" : "asset-image", asset: cm.asset, path: p, overrides });
+      visuals.push({ kind: asset.kind, source: asset.kind === "video" ? "asset-video" : "asset-image", asset: cm.asset, path: p, overrides, inserts });
     } else {
       const p = images[i] ? await downloadCached(images[i], join(cardsDir, `${cm.name}.png`)) : join(cardsDir, `${cm.name}.png`);
-      visuals.push({ kind: "image", source: "card", type: cm.type, path: p, overrides });
+      visuals.push({ kind: "image", source: "card", type: cm.type, path: p, overrides, inserts });
     }
   }
   // voiceMeta.tag 标出这一版用的文件后缀(A 版 "",B 版 "-b")—— 整段一次合成之后,
@@ -1133,6 +1190,47 @@ export async function renderAssetSeg(src, out, { W, H, fps, segDur, move = null,
   return { decisions };
 }
 
+const totalDurOf = (tl) => (tl.length ? tl[tl.length - 1].start + tl[tl.length - 1].dur + tl[tl.length - 1].gap : 0);
+
+// 插入点记成"念到哪个字"(anchor = 那个字在这拍台词里的位置 + 从那儿起的几个字):
+// 配音重做、语速变了,插入跟着那个字走;字对不上了就退回当初的秒数
+function anchorTime(words, anchor, offset, beatDur) {
+  const index = spokenIndex(words || []);
+  if (anchor?.text) {
+    const at = index.text.indexOf(anchor.text, Math.max(0, (anchor.charIdx ?? 0) - 6));
+    const exact = [...index.text].slice(anchor.charIdx ?? 0, (anchor.charIdx ?? 0) + [...anchor.text].length).join("") === anchor.text;
+    const ci = exact ? anchor.charIdx : at >= 0 ? [...index.text.slice(0, at)].length : -1;
+    if (ci >= 0 && index.times[ci] != null) return { t: index.times[ci], how: `从念到「${anchor.text}」开始(跟着字走,配音变了位置也跟着变)` };
+  }
+  const t = Math.max(0, Math.min(beatDur - 0.5, Number(offset) || 0));
+  return { t, how: anchor?.text ? `台词里找不到「${anchor.text}」了,按当初的位置(这拍第 ${s1(t)})放` : `这拍第 ${s1(t)} 开始` };
+}
+
+// 插入的素材先单独渲成一小段:全屏按进画规则放进画面;画中画缩到 62% 宽、加白边
+async function prepInsert(ins, asset, src, { W, H, fps, dir }) {
+  const dur = Math.max(0.3, ins.dur);
+  const out = join(dir, `insert-${String(ins.id).replace(/[^\w-]/g, "")}.mp4`);
+  const info = await ffprobeInfo(src);
+  const vs = (info.streams || []).find((x) => x.codec_type === "video") || {};
+  const srcDur = parseFloat(info.format?.duration) || 0;
+  const from = asset.kind === "video" ? Math.max(0, Math.min(Number(ins.from) || 0, Math.max(0, srcDur - 0.5))) : 0;
+  const pip = ins.mode === "pip" && ins.kind !== "gap";
+  let vf;
+  if (pip) {
+    const bw = evenPx(W * 0.62), bh = evenPx(H * 0.5);
+    vf = `scale=${bw}:${bh}:force_original_aspect_ratio=decrease,pad=iw+12:ih+12:6:6:white,setsar=1`;
+  } else {
+    vf = fitChain(W, H, vs.width, vs.height).chain;
+  }
+  const hold = asset.kind === "video" && srcDur - from < dur ? dur - (srcDur - from) : 0;
+  const r = await cached(out, { kind: "insert", src: await fileSha(src), vf, dur: Math.round(dur * 1000), from, fps }, async (tmp) => {
+    const inArgs = asset.kind === "video" ? ["-ss", from.toFixed(3), "-i", src] : ["-loop", "1", "-framerate", String(fps), "-i", src];
+    const chain = [...(hold > 0.05 ? [`tpad=stop_mode=clone:stop_duration=${hold.toFixed(3)}`] : []), vf, `fps=${fps}`, "format=yuv420p"].join(",");
+    await ffmpeg([...inArgs, "-t", dur.toFixed(3), "-vf", chain, "-an", "-c:v", "libx264", "-crf", "20", "-preset", "veryfast", "-pix_fmt", "yuv420p", tmp]);
+  });
+  return out;
+}
+
 async function edit(item) {
   const up = item.upstream || {};
   mark(item, null, "下载画面和配音");
@@ -1158,11 +1256,22 @@ async function edit(item) {
   // 第 i 段要多渲一个转场的时长,给下一刀当重叠料;xfade 吃掉的正好是多出来的部分,
   // 所以成片总长仍然等于 Σ(每拍时长 + 句尾留白),音轨不用动。
   const trans = planTransitions(meta);
+  // 每拍句尾的停顿 = 你拖出来的停顿(覆盖)或配音自带的 + 插在这段停顿里的纯画面时长。
+  // 纯画面插入不动配音、不动素材 —— 只是把这里的停顿拉长 N 秒,这 N 秒里全屏放素材。
+  const effGap = meta.map((m, i) => {
+    const ov = visuals[i]?.overrides || {};
+    const base = ov.gap != null ? Number(ov.gap) : m.gap ?? GAP;
+    const extra = (visuals[i]?.inserts || []).filter((x) => x.kind === "gap").reduce((n, x) => n + Number(x.dur || 0), 0);
+    return { base, extra, total: base + extra, you: ov.gap != null };
+  });
   for (let i = 0; i < visuals.length; i++) {
     const v = visuals[i];
     const beat = meta[i].name;
     const ov = v.overrides || {};
-    const beatDur = meta[i].dur + (meta[i].gap ?? GAP);
+    const beatDur = meta[i].dur + effGap[i].total;
+    if (effGap[i].you) {
+      decisions.push({ beat, topic: "停顿", choice: `句尾停 ${effGap[i].base.toFixed(2)}s`, why: `配音自带 ${(meta[i].gap ?? GAP).toFixed(2)}s,你在时间轴上拖过`, key: "gap", value: Number(effGap[i].base.toFixed(2)), by: "you" });
+    }
     const segDur = beatDur + (trans[i] ? trans[i].dur : 0);
     const frames = Math.ceil(segDur * fps);
     const words = meta[i].words || [];
@@ -1173,7 +1282,7 @@ async function edit(item) {
       beat,
       topic: "画面",
       choice: v.source === "anim" ? `${CARD_TYPES[v.type] ?? "设计卡"}(动画)` : v.source === "card" ? `${CARD_TYPES[v.type] ?? "设计卡"}(静态图)` : `${v.kind === "video" ? "录屏" : "图片"}「${v.asset}」`,
-      why: `这拍 ${s1(segDur)}(配音 ${s1(meta[i].dur)} + 句尾留白 ${s1(meta[i].gap ?? GAP)}${trans[i] ? ` + 给下一刀转场的重叠 ${s1(trans[i].dur)}` : ""})`,
+      why: `这拍 ${s1(segDur)}(配音 ${s1(meta[i].dur)} + 句尾停顿 ${s1(effGap[i].total)}${effGap[i].extra ? `,其中 ${s1(effGap[i].extra)} 是插进来的纯画面` : ""}${trans[i] ? ` + 给下一刀转场的重叠 ${s1(trans[i].dur)}` : ""})`,
     });
 
     // ── 画面源 ──
@@ -1337,35 +1446,99 @@ async function edit(item) {
   await closeBrowser();
 
   // 2) 串起来:一刀一个 xfade(offset 用"到这拍为止的累计时长",不含重叠)
+  // 时间轴:每拍在成片里从哪开始、念多久、后面停多久 —— 字幕/润色/网页时间轴都按它走
+  const timeline = [];
+  {
+    let t = 0;
+    meta.forEach((m, i) => {
+      timeline.push({ name: m.name, start: Number(t.toFixed(3)), dur: m.dur, gap: Number(effGap[i].total.toFixed(3)) });
+      t += m.dur + effGap[i].total;
+    });
+  }
+
+  // 时间轴上插入的素材:盖在原画面上(全屏 / 画中画),或者放在拉长的停顿里(纯画面)
+  mark(item, null, "准备插入的素材");
+  const overlays = [];
+  for (let i = 0; i < visuals.length; i++) {
+    let gapCursor = timeline[i].start + meta[i].dur + effGap[i].base;
+    for (const ins of visuals[i].inserts || []) {
+      const asset = (item.assets || []).find((a) => a.name === ins.asset);
+      const beat = meta[i].name;
+      if (!asset) {
+        decisions.push({ beat, topic: "插入", choice: `「${ins.asset}」没插上`, why: "素材库里找不到这个文件(可能被删了)", warn: true });
+        continue;
+      }
+      const dur = Math.max(0.5, Math.min(30, Number(ins.dur) || 3));
+      let t0;
+      let why;
+      if (ins.kind === "gap") {
+        t0 = gapCursor;
+        gapCursor += dur;
+        why = "放在这拍后面拉长的停顿里,纯画面、不念台词;配音和素材阶段都不用动";
+      } else {
+        const local = anchorTime(meta[i].words, ins.anchor, ins.offset, meta[i].dur + effGap[i].total);
+        t0 = timeline[i].start + local.t;
+        why = local.how;
+      }
+      const t1 = Math.min(totalDurOf(timeline), t0 + dur);
+      const src = await downloadCached(asset.url, join(workDir(item, "assets"), asset.name));
+      const clip = await prepInsert({ ...ins, dur: t1 - t0 }, asset, src, { W, H, fps, dir });
+      overlays.push({ ...ins, t0, t1, clip, beat });
+      decisions.push({
+        beat,
+        topic: "插入",
+        choice: `「${ins.asset}」${ins.kind === "gap" ? "纯画面" : ins.mode === "pip" ? "画中画" : "全屏"} ${s1(t1 - t0)} · ${s1(t0)}–${s1(t1)}`,
+        why,
+        by: "you",
+      });
+    }
+  }
+
   mark(item, null, "拼接转场");
   const videoOnly = join(dir, "video-only.mp4");
-  if (segs.length === 1) {
-    await ffmpeg(["-i", segs[0], "-c", "copy", videoOnly]);
-  } else {
+  {
     const inputs = segs.flatMap((s) => ["-i", s]);
     let offset = 0;
-    const chain = trans.map((t, i) => {
-      offset += meta[i].dur + (meta[i].gap ?? GAP);
+    const parts = trans.map((t, i) => {
+      offset += meta[i].dur + effGap[i].total;
       const src = i === 0 ? "[0:v]" : `[x${i}]`;
-      const dst = i === trans.length - 1 ? "[vout]" : `[x${i + 1}]`;
+      const dst = `[x${i + 1}]`;
       // offset = 转场开始的时刻,也就是"到这拍为止的累计时长"。
       // 每段多渲了一个转场的料,所以这一刻正好是上一段多出来那截的开头。
       return `${src}[${i + 1}:v]xfade=transition=${t.type}:duration=${t.dur}:offset=${offset.toFixed(3)}${dst}`;
-    }).join(";");
-    await ffmpeg([...inputs, "-filter_complex", chain, "-map", "[vout]", "-c:v", "libx264", "-crf", "19", "-preset", "fast", "-pix_fmt", "yuv420p", videoOnly]);
+    });
+    let last = trans.length ? `[x${trans.length}]` : "[0:v]";
+    // 插入的素材最后叠上去:淡入淡出 0.25s,只在它那段时间里显示
+    overlays.forEach((o, k) => {
+      const n = segs.length + k;
+      inputs.push("-i", o.clip);
+      const d = o.t1 - o.t0;
+      const fade = Math.min(0.25, d / 4);
+      parts.push(
+        `[${n}:v]format=yuva420p,fade=t=in:st=0:d=${fade.toFixed(2)}:alpha=1,fade=t=out:st=${(d - fade).toFixed(3)}:d=${fade.toFixed(2)}:alpha=1,setpts=PTS-STARTPTS+${o.t0.toFixed(3)}/TB[ins${k}]`,
+        `${last}[ins${k}]overlay=x='(W-w)/2':y='${o.mode === "pip" && o.kind !== "gap" ? "H*0.13" : "(H-h)/2"}':enable='between(t,${o.t0.toFixed(3)},${o.t1.toFixed(3)})':eof_action=pass[ov${k}]`,
+      );
+      last = `[ov${k}]`;
+    });
+    if (!parts.length) {
+      await ffmpeg(["-i", segs[0], "-c", "copy", videoOnly]);
+    } else {
+      parts.push(`${last}null[vout]`);
+      await ffmpeg([...inputs, "-filter_complex", parts.join(";"), "-map", "[vout]", "-c:v", "libx264", "-crf", "19", "-preset", "fast", "-pix_fmt", "yuv420p", videoOnly]);
+    }
   }
   console.log(`  [edit] 转场:${trans.map((t) => `${t.into} ${t.type}`).join("  ")}`);
 
   // 3) voice track: each clip padded to its segment length, then concat
   mark(item, null, "拼配音轨");
   const inputs = voices.flatMap((v) => ["-i", v]);
-  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,volume=5dB,atrim=${(m.head ?? 0).toFixed(3)}:${((m.head ?? 0) + m.dur).toFixed(3)},asetpts=PTS-STARTPTS,apad=pad_dur=${(m.gap ?? GAP).toFixed(3)}[a${i}]`).join(";");
+  const filters = meta.map((m, i) => `[${i}:a]aresample=44100,volume=5dB,atrim=${(m.head ?? 0).toFixed(3)}:${((m.head ?? 0) + m.dur).toFixed(3)},asetpts=PTS-STARTPTS,apad=pad_dur=${effGap[i].total.toFixed(3)}[a${i}]`).join(";");
   const concatF = meta.map((_, i) => `[a${i}]`).join("") + `concat=n=${meta.length}:v=0:a=1[av]`;
   const voiceM4a = join(dir, "voice.m4a");
   await ffmpeg([...inputs, "-filter_complex", filters + ";" + concatF, "-map", "[av]", voiceM4a]);
 
   // 4) 音效:换拍、分步出现、手绘开笔(规则见 sfx.mjs);项目级开关在决定清单里
-  const totalDur = meta.reduce((n, m) => n + m.dur + (m.gap ?? GAP), 0);
+  const totalDur = totalDurOf(timeline);
   let sfxTrack = null;
   let sfxPlan = { events: [], dropped: [] };
   const sfxOn = settings.sfx !== "off";
@@ -1399,12 +1572,15 @@ async function edit(item) {
     await ffmpeg(["-i", videoOnly, ...aIn, "-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-shortest", out]);
   }
 
-  console.log("  [edit] uploading edit.mp4…");
-  mark(item, null, "上传成片");
-  const { url } = await upload(item.projectId, out, "edit.mp4");
   const total = await ffprobeDur(out);
-  const expected = meta.reduce((n, m) => n + m.dur + (m.gap ?? GAP), 0);
+  const expected = totalDur;
   const info = await ffprobeInfo(out);
+  mark(item, null, "压审核用的预览");
+  const preview = await makePreview(out, join(dir, "edit-preview.mp4"), item.aspect);
+  const master = await keepMaster(out, dir, "edit");
+  console.log("  [edit] uploading preview…");
+  mark(item, null, "上传预览");
+  const { url } = await uploadP(item, preview, `edit-${stamp()}.mp4`, "上传预览");
   const vs = (info.streams || []).find((x) => x.codec_type === "video") || {};
   const warn = [];
   if (Math.abs(total - expected) > 1.5) warn.push(`成片 ${total.toFixed(1)}s 与音轨预期 ${expected.toFixed(1)}s 对不上`);
@@ -1430,13 +1606,18 @@ async function edit(item) {
       warn: sfxOn && !sfxReady(),
     },
     { topic: "渲染", choice: `重渲 ${visuals.length - reused} 拍 · 沿用 ${reused} 拍`, why: "素材、时长、参数都没变的拍直接用上次渲好的,只重渲改了的" },
+    { topic: "审核用", choice: "720p 预览", why: `高清版(${(master.bytes / 1048576).toFixed(1)} MB)留在渲染机上直接给字幕用,润色时才整条上传 —— 上行慢,1080p 传一次要好几分钟` },
     ...(ovCount ? [{ topic: "你的参数", choice: `${ovCount} 拍用了你定的剪辑参数`, by: "you" }] : []),
     ...warn.map((w) => ({ topic: "自检", choice: w, warn: true })),
   );
   return {
     video: url,
+    preview: true,
+    master,
     decisions,
     focus: focusCues,
+    timeline,
+    inserts: overlays.map(({ id, asset, kind, mode, t0, t1, beat }) => ({ id, asset, kind, mode, beat, start: Number(t0.toFixed(2)), end: Number(t1.toFixed(2)) })),
     sfx: sfxPlan.events.map(({ t, kind, db, beat }) => ({ t: Number(t.toFixed(2)), kind, db, beat })),
     note: `粗剪 ${total.toFixed(1)}s,${visuals.length} 拍${bgmFile ? "(带 BGM 垫底)" : "(无 BGM)"}。${cameraLog.length ? `运镜:${cameraLog.join("  ")}` : ""}${trans.length ? `\n转场:${trans.map((t) => `${t.into} ${t.type}`).join("  ")}` : ""}
 节奏/画面对位请审。${warnLine}`,
@@ -1504,8 +1685,8 @@ async function subtitles(item) {
   const size = sizeFor(item.aspect);
   const dir = workDir(item, "subs");
 
-  mark(item, null, "下载粗剪");
-  const local = await downloadCached(editVideo, join(dir, "edit.mp4"));
+  const src = await localMaster(item, item.upstream?.edit, dir, "edit.mp4");
+  const local = src.path;
 
   // One transparent PNG per ≤14-char line; time allocated by char share of the
   // clip. Burned via overlay+enable (this ffmpeg build has no libass/drawtext).
@@ -1518,7 +1699,10 @@ async function subtitles(item) {
   let highlighted = 0;
   let byWords = 0;
   const decisions = [];
+  // 每拍在成片里的开始时间以剪辑的时间轴为准(你拖过停顿、插过纯画面,就和配音自带的留白不一样了)
+  const tl = new Map((item.upstream?.edit?.timeline || []).map((x) => [x.name, x]));
   for (const m of meta) {
+    if (tl.has(m.name)) offset = tl.get(m.name).start;
     mark(item, m.name, "渲字幕行");
     // 首选 MiniMax 给的字级时间戳;老项目没有就退回按字数估算
     const timed = Array.isArray(m.words) && m.words.length ? linesFromWords(m.words) : null;
@@ -1565,18 +1749,23 @@ async function subtitles(item) {
     .join(";");
   const out = join(dir, "subs.mp4");
   await ffmpeg(["-i", local, ...inputs, "-filter_complex", chain, "-map", "[vout]", "-map", "0:a", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "copy", out]);
-  console.log("  [subtitles] uploading subs.mp4…");
-  mark(item, null, "上传带字幕成片");
-  const { url } = await upload(item.projectId, out, "subs.mp4");
+  const vidDurEarly = await ffprobeDur(out);
+  mark(item, null, "压审核用的预览");
+  const preview = await makePreview(out, join(dir, "subs-preview.mp4"), item.aspect);
+  const master = await keepMaster(out, dir, "subs");
+  console.log("  [subtitles] uploading preview…");
+  mark(item, null, "上传预览");
+  const { url } = await uploadP(item, preview, `subs-${stamp()}.mp4`, "上传预览");
   const warn = [];
   if (!overlays.length) warn.push("一行字幕都没有");
   const lastEnd = overlays.length ? overlays.at(-1).end : 0;
-  const vidDur = await ffprobeDur(out);
+  const vidDur = vidDurEarly;
   if (overlays.length && vidDur - lastEnd > 3) warn.push(`结尾 ${(vidDur - lastEnd).toFixed(1)}s 没有字幕`);
   const warnLine = warn.length ? `\n⚠ 字幕自检:${warn.join(";")}` : "";
   const timing = byWords === meta.length ? "跟着人声逐字对齐" : byWords ? `${byWords}/${meta.length} 拍逐字对齐,其余按字数估算` : "按字数估算(这条片没有字级时间戳)";
   decisions.unshift(
-    { topic: "底片", choice: `剪辑阶段 ${vtime(editVideo) ?? "(时间不明)"} 那版粗剪`, why: "字幕烧在这版视频上;粗剪之后再改,字幕要跟着重出" },
+    { topic: "底片", choice: `剪辑阶段 ${vtime(editVideo) ?? "(时间不明)"} 那版粗剪`, why: src.fromPreview ? "渲染机上找不到那版的高清母版,用 720p 预览当底片 —— 画质会差一些,重出一次剪辑就好" : "直接用渲染机上的高清母版,字幕烧在这版上;粗剪之后再改,字幕要跟着重出", warn: src.fromPreview },
+    { topic: "审核用", choice: "720p 预览", why: "高清版留在渲染机上,润色时才整条上传" },
     { topic: "断行", choice: `${overlays.length} 行,每行最多 14 字`, why: "按标点断,1-3 个字的碎片并进上一行,免得一闪一个字" },
     { topic: "对齐", choice: timing, warn: byWords < meta.length },
     ...(focus.length ? [{ topic: "高亮", choice: `${highlighted} 处`, why: `镜头推到录屏某块时,字幕里念到的那个词变黄加粗(${focus.map((f) => `「${f.word}」`).join("")})` }] : []),
@@ -1584,6 +1773,8 @@ async function subtitles(item) {
   );
   return {
     video: url,
+    preview: true,
+    master,
     subs: overlays.map((o) => ({ text: o.text, start: o.start, end: o.end })),
     decisions,
     note: `字幕已烧录(${overlays.length} 行,${timing})。错字/断句/位置请审。${warnLine}`,
@@ -1626,13 +1817,14 @@ async function deadFrames(file, beats, vertical) {
 }
 
 async function polish(item) {
-  const video = item.upstream?.subtitles?.video || item.upstream?.edit?.video;
+  const upv = item.upstream?.subtitles?.video ? item.upstream.subtitles : item.upstream?.edit;
+  const video = upv?.video;
   if (!video) throw new Error("上游没有成片视频");
 
   // ── 成片自动体检(学 MuseDock visualQaService):画幅/时长/黑屏/冻结/抽帧总评 ──
   const dir = workDir(item, "polish");
-  mark(item, null, "下载成片");
-  const local = await downloadCached(video, join(dir, "final.mp4"));
+  const src = await localMaster(item, upv, dir, "final.mp4");
+  const local = src.path;
   const qa = { issues: [] };
   try {
     mark(item, null, "体检画幅和时长");
@@ -1660,8 +1852,11 @@ async function polish(item) {
 
     mark(item, null, "体检死帧");
     const vm = item.upstream?.voice?.voiceMeta?.clips || [];
+    const etl = item.upstream?.edit?.timeline;
     let at = 0;
-    const beatsT = vm.map((c) => { const b = { name: c.name, start: at, dur: c.dur + (c.gap ?? GAP) }; at += b.dur; return b; });
+    const beatsT = etl?.length
+      ? etl.map((x) => ({ name: x.name, start: x.start, dur: x.dur + x.gap }))
+      : vm.map((c) => { const b = { name: c.name, start: at, dur: c.dur + (c.gap ?? GAP) }; at += b.dur; return b; });
     qa.dead = beatsT.length ? await deadFrames(local, beatsT, item.aspect !== "16:9") : [];
     const stillBeats = qa.dead.filter((b) => b.dur >= 3 && b.stillPct >= 0.75);
     const flatBeats = qa.dead.filter((b) => b.flatPct > 0.4);
@@ -1690,9 +1885,17 @@ async function polish(item) {
     ? `体检没跑成:${qa.error}`
     : `体检:${qa.aspectOk ? "画幅✓" : "画幅✗"} · ${qa.durationSec}s/目标${qa.targetSec}s(偏差${qa.deviationPct}%) · 黑屏${qa.blackIntervals} · 冻结${qa.freezeIntervals} · AI总评${qa.vision?.ok === false ? "有问题" : "通过"}`;
 
-  const src = item.upstream?.subtitles?.video ? "字幕阶段" : "剪辑阶段";
+  const srcName = item.upstream?.subtitles?.video ? "字幕阶段" : "剪辑阶段";
+  // 整条高清成片只在这里上传一次(交付打包用它);前面两步给你审的都是 720p 预览
+  mark(item, null, "上传高清成片");
+  const { url: finalUrl } = await uploadP(item, local, `final-${stamp()}.mp4`, "上传高清成片");
   const decisions = [
-    { topic: "体检的成片", choice: `${src} ${vtime(video) ?? "(时间不明)"} 那版`, why: "交付打包用的也是这一版" },
+    {
+      topic: "体检的成片",
+      choice: `${srcName} ${vtime(video) ?? "(时间不明)"} 那版`,
+      why: src.fromPreview ? "渲染机上找不到高清母版,体检和交付用的是 720p 预览 —— 重出一次字幕就能换回高清" : "高清版,交付打包用的也是这一版(这一步才整条上传)",
+      warn: src.fromPreview,
+    },
     ...(qa.error
       ? [{ topic: "体检", choice: "没跑成", why: qa.error, warn: true }]
       : [
@@ -1716,7 +1919,7 @@ async function polish(item) {
         ]),
   ];
   return {
-    video,
+    video: finalUrl,
     qa,
     decisions,
     note: `${qaLine}\n要微调(节奏/某句/某画面)就打回写批注;满意就通过,进入交付打包。${qa.issues.length ? "\n⚠ " + qa.issues.join(" / ") : ""}`,
@@ -1738,7 +1941,7 @@ async function deliver(item) {
   if (coverRender.layout?.length) console.log(`  [deliver] 封面排版:${coverRender.layout.join(";")}`);
   await closeBrowser();
   mark(item, null, "上传封面");
-  const { url: coverUrl } = await upload(item.projectId, png, "cover.png");
+  const { url: coverUrl } = await upload(item.projectId, png, `cover-${stamp()}.png`);
 
   mark(item, null, "写发布文案");
   const caption = await chatJSON(guided(item, PROMPTS.caption(item, t, scriptText)), { temperature: 0.7 }, validateCaption);

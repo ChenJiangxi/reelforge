@@ -7,7 +7,7 @@
 // Required env: BOARD_URL, WORKER_TOKEN, OPENROUTER_API_KEY, MINIMAX_API_KEY
 // Run via: secret exec OPENROUTER_API_KEY_REELFORGE MINIMAX_API_KEY -- \
 //   env OPENROUTER_API_KEY=$OPENROUTER_API_KEY_REELFORGE node worker/index.mjs
-import { poll, claim, submit, resetWorking, stageStatus, postCalls } from "./board.mjs";
+import { poll, claim, submit, resetWorking, stageStatus, postCalls, heartbeat } from "./board.mjs";
 import { withCallContext, flushCalls } from "./calls.mjs";
 import { STAGES, WORK_ROOT } from "./stages.mjs";
 import { freeGB } from "./ffmpeg.mjs";
@@ -126,6 +126,7 @@ async function tick() {
     }
 
     inflight.set(item.stageId, item);
+    item.startedAt = Date.now();
     (async () => {
       try {
         await claim(item.stageId);
@@ -165,6 +166,26 @@ async function tick() {
   }
 }
 
+// 心跳:每 5 秒告诉服务器"我在"+ 手上在做哪一拍、哪一步、上传到哪了、磁盘还剩多少。
+// 网页靠它显示实时进度,也靠它发现渲染机离线(睡眠、断网、pm2 挂了)—— 以前这些网页上都看不出来。
+async function beat() {
+  const jobs = [...inflight.values()].map((it) => ({
+    stageId: it.stageId,
+    projectId: it.projectId,
+    kind: it.kind,
+    beat: it.progress?.beat ?? null,
+    step: it.progress?.step ?? null,
+    total: it.upstream?.script?.clips?.length ?? null,
+    upload: it.progress?.upload ?? null,
+    startedAt: it.startedAt ?? null,
+  }));
+  try {
+    await heartbeat({ jobs, diskGB: Number(freeGB(WORK_ROOT).toFixed(1)), pid: process.pid });
+  } catch {
+    /* 服务器没这个接口或网络抖:下次再报 */
+  }
+}
+
 async function main() {
   log(`reelforge worker starting (board=${process.env.BOARD_URL || "http://localhost:3000"}, poll=${POLL_MS}ms, conc=${MAX_CONC})`);
   await loadPlaybooks().catch((e) => log(`playbooks load failed (local fallback): ${e.message}`));
@@ -178,5 +199,7 @@ async function main() {
   tick();
   setInterval(tick, POLL_MS);
   setInterval(() => flushCalls(postCalls), 15000);
+  beat();
+  setInterval(beat, 5000);
 }
 main();

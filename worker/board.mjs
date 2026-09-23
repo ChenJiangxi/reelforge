@@ -35,6 +35,8 @@ export const claim = (stageId) =>
 export const submit = (stageId, status, artifacts) =>
   api("/api/worker/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ stageId, status, artifacts }) });
 export const resetWorking = () => api("/api/worker/reset", { method: "POST" });
+export const heartbeat = (body) =>
+  api("/api/worker/heartbeat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, 4);
 export const postCalls = (records) =>
   api("/api/worker/calls", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ records }) }, 3);
 /** { stageId: status } —— worker 用来发现手上的阶段被重新排队了 */
@@ -42,7 +44,8 @@ export const stageStatus = (ids) => api(`/api/worker/status?ids=${ids.map(encode
 
 // Uploads go over a slow international link (tens of KB/s); use raw http with
 // a 15-minute timeout and retries — undici's fetch defaults give up mid-file.
-export async function upload(projectId, absPath, name, attempt = 1) {
+// onProgress(sent, total):分块写,每写一块报一次 —— 页面上显示"上传成片 60%"
+export async function upload(projectId, absPath, name, attempt = 1, onProgress = null) {
   const { readFile } = await import("node:fs/promises");
   const buf = await readFile(absPath);
   const fname = name || absPath.split("/").pop();
@@ -85,16 +88,31 @@ export async function upload(projectId, absPath, name, attempt = 1) {
     req.on("timeout", () => req.destroy(new Error("upload timeout")));
     req.on("error", reject);
     req.write(head);
-    req.write(buf);
-    req.end(tail);
+    // 分块写:网络慢的时候按 drain 节奏走,顺便知道传了多少
+    const CHUNK = 256 * 1024;
+    let off = 0;
+    const pump = () => {
+      while (off < buf.length) {
+        const end = Math.min(buf.length, off + CHUNK);
+        const ok = req.write(buf.subarray(off, end));
+        off = end;
+        onProgress?.(off, buf.length);
+        if (!ok) {
+          req.once("drain", pump);
+          return;
+        }
+      }
+      req.end(tail);
+    };
+    pump();
   });
 
   try {
     return await doOnce();
   } catch (e) {
-    if (attempt < 4) {
+    if (attempt < 4 && !/-> 507/.test(String(e.message))) {
       await new Promise((r) => setTimeout(r, 15000 * attempt));
-      return upload(projectId, absPath, name, attempt + 1);
+      return upload(projectId, absPath, name, attempt + 1, onProgress);
     }
     throw e;
   }
