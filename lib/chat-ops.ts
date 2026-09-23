@@ -1,9 +1,10 @@
-// Chat → clip-level edit ops, parsed by DeepSeek on the server (cheap: ~1k tokens/msg).
+// Chat → clip-level edit ops。解析交给渲染机上的本机 Claude(lib/llm-relay.ts),2026-09-24 起不用 DeepSeek。
 // The video is a sequence of 分句 clips (大字卡 + 配音), so "对话剪辑" =
 // natural-language ops on that clip list, then downstream stages regenerate.
 
 import type { Overrides } from "@/lib/stages";
 import { recordServerCall } from "@/lib/calls";
+import { askLLMSafe } from "@/lib/llm-relay";
 
 export type Say = { speed?: number; pitch?: number; emotion?: string; gap_after?: number };
 export type Clip = {
@@ -26,7 +27,6 @@ export type ChatOp =
 
 export type ParsedChat = { ops: ChatOp[]; reply: string };
 
-const MODEL = process.env.LLM_MODEL || "deepseek/deepseek-v3.2";
 
 export async function parseChat(
   userText: string,
@@ -38,10 +38,6 @@ export async function parseChat(
   projectId?: string,
 ): Promise<ParsedChat> {
   const t0 = Date.now();
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) {
-    return { ops: [], reply: "服务器还没配 LLM key,这条我先记下了,暂时没法自动改。" };
-  }
   const clipList = clips.length
     ? clips.map((c) => `${c.name}: "${c.text}"(画面:${c.visual || "无"})`).join("\n")
     : "(还没有分句——脚本阶段还没产出)";
@@ -59,15 +55,7 @@ review 操作优先于一切普通操作——她在审,不是在下新需求。
     : "【当前状态:没有待审阶段】她的话都是普通修改或闲聊。";
 
   // 服务端调 LLM 也要有超时:挂住的连接会让她的聊天框一直转圈(worker 那边 09-13 吃过同样的亏)
-  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    signal: AbortSignal.timeout(60_000),
-    method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: MODEL,
-      temperature: 0.2,
-      max_tokens: 1200,
-      messages: [
+  const llm = await askLLMSafe([
         {
           role: "system",
           content: `你是视频剪辑助手。这条片是"分句口播视频":每句台词 = 一张大字卡 + 一段配音,按顺序拼接。
@@ -102,27 +90,23 @@ ${stateCtx || "(还没有素材产物)"}
 
 她说:${userText}`,
         },
-      ],
-    }),
-  });
-  const j = await r.json().catch(() => ({}));
-  const text: string | undefined = j.choices?.[0]?.message?.content;
+      ], { tier: "fast", timeoutMs: 90000 });
+  const text: string | undefined = llm.text || undefined;
   if (projectId) {
     recordServerCall({
       projectId,
       stage: "chat",
       step: "解析聊天",
       kind: "llm",
-      model: MODEL,
-      status: r.ok && text ? "ok" : "error",
-      httpStatus: r.status,
+      model: "claude-sonnet(本机)",
+      status: llm.ok && text ? "ok" : "error",
+      httpStatus: llm.ok ? 200 : 503,
       durationMs: Date.now() - t0,
       request: { messages: [{ role: "user", content: userText }] },
-      response: text ?? JSON.stringify(j).slice(0, 2000),
-      usage: j.usage,
+      response: text ?? llm.error ?? "",
     });
   }
-  if (!r.ok || !text) throw new Error(`LLM ${r.status}`);
+  if (!llm.ok || !text) throw new Error(llm.error || "本机 Claude 没回话");
   const m = text.match(/\{[\s\S]*\}/);
   if (!m) return { ops: [{ action: "reply", text }], reply: text };
   const parsed = JSON.parse(m[0]) as ParsedChat;

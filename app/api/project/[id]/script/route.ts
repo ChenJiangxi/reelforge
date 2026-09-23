@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { askLLMSafe } from "@/lib/llm-relay";
 import { prisma } from "@/lib/db";
 import { requeue } from "@/lib/rerun";
 import type { Decision } from "@/lib/stages";
@@ -25,18 +26,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const oldClips = Array.isArray(oldArt.clips) ? oldArt.clips : [];
 
   // Re-segment her text into beats. The text is law — LLM must not rewrite it.
-  const key = process.env.OPENROUTER_API_KEY;
   let clips;
-  if (key) try {
-    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      signal: AbortSignal.timeout(90_000),
-      method: "POST",
-      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        model: process.env.LLM_MODEL || "deepseek/deepseek-v3.2",
-        temperature: 0.1,
-        max_tokens: 4000,
-        messages: [
+  try {
+    const llm = await askLLMSafe([
           {
             role: "system",
             content: `你是分镜师。用户改好了一篇口播稿,你唯一的活:把它按节拍切成 clips。
@@ -57,22 +49,18 @@ ${JSON.stringify(oldClips.map((c: { text: string; visual?: string; say?: unknown
 她改好的稿子(全文,逐字保留):
 ${text}`,
           },
-        ],
-      }),
-    });
-    const j = await r.json().catch(() => ({}));
-    const raw = j.choices?.[0]?.message?.content ?? "";
+        ], { tier: "deep", timeoutMs: 180000 });
+    const raw = llm.text ?? "";
     recordServerCall({
       projectId: id,
       stage: "script",
       step: "按你改的稿切拍",
       kind: "llm",
-      model: process.env.LLM_MODEL || "deepseek/deepseek-v3.2",
-      status: r.ok && raw ? "ok" : "error",
-      httpStatus: r.status,
+      model: "claude-opus(本机)",
+      status: llm.ok && raw ? "ok" : "error",
+      httpStatus: llm.ok ? 200 : 503,
       request: { messages: [{ role: "user", content: text.slice(0, 20000) }] },
-      response: raw || JSON.stringify(j).slice(0, 2000),
-      usage: j.usage,
+      response: raw || llm.error || "",
     });
     const m = raw.match(/\{[\s\S]*\}/);
     try {

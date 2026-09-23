@@ -115,3 +115,13 @@ pm2 restart reelforge-worker   # worker 代码改了;worker 不用部署
 ```
 
 schema 变了除了 `--full`,还要把新生成的 `@prisma/client` 同步到服务器,再 `prisma db push`。
+
+
+## LLM:本机 Claude(09-24 起)
+
+写稿、排镜头、改稿、看图全部用渲染机上登录的 Claude(`worker/claude.mjs`,`claude -p` 无头调用,
+关掉工具、MCP 和本机用户级钩子,换成我们自己的系统提示词),不再用 OpenRouter / DeepSeek。
+阶段里的调用默认 Opus(`CLAUDE_MODEL`),看图和聊天框用 Sonnet;同时最多 3 个(`CLAUDE_CONC`)。
+网站服务器跑不了本机 Claude:聊天框解析、「换一个」、改稿重新分拍放进服务器内存队列(`lib/llm-relay.ts`),
+渲染机长轮询 `GET /api/worker/llm` 领活、跑完 `POST` 回去(`worker/llm-relay.mjs`)。渲染机离线时这几个功能会报"没回话"。
+生图、生视频一律不接(不用 OpenRouter / Gemini / MiniMax 生成)。

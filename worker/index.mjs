@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // reelforge render worker — polls the board, claims one claimable stage at a
 // time (heavy ffmpeg/Playwright work, serial by default), executes it with a
-// deterministic pipeline (DeepSeek for words, MiniMax for voice, ffmpeg for
-// the cut), pushes artifacts back for human review.
+// deterministic pipeline (本机 Claude 写稿排镜头, MiniMax for voice, Remotion + ffmpeg for
+// the cut), pushes artifacts back for human review. 同时替网站服务器跑 LLM 请求(worker/llm-relay.mjs)。
 //
-// Required env: BOARD_URL, WORKER_TOKEN, OPENROUTER_API_KEY, MINIMAX_API_KEY
-// Run via: secret exec OPENROUTER_API_KEY_REELFORGE MINIMAX_API_KEY -- \
-//   env OPENROUTER_API_KEY=$OPENROUTER_API_KEY_REELFORGE node worker/index.mjs
+// Required env: BOARD_URL, WORKER_TOKEN, MINIMAX_API_KEY;本机要能跑 `claude`(已登录)
+// Run via: worker/start.sh(pm2 reelforge-worker)
 import { poll, claim, submit, resetWorking, stageStatus, postCalls, heartbeat } from "./board.mjs";
 import { withCallContext, flushCalls } from "./calls.mjs";
 import { STAGES, WORK_ROOT } from "./stages.mjs";
 import { freeGB } from "./ffmpeg.mjs";
 import { loadPlaybooks } from "./prompts.mjs";
+import { startLlmRelay } from "./llm-relay.mjs";
 
 const POLL_MS = Number(process.env.POLL_MS || 15000);
 const MAX_CONC = Number(process.env.MAX_CONC || 1);
@@ -201,5 +201,6 @@ async function main() {
   setInterval(() => flushCalls(postCalls), 15000);
   beat();
   setInterval(beat, 5000);
+  startLlmRelay();
 }
 main();

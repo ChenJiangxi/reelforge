@@ -1,53 +1,28 @@
-// OpenRouter chat completions — the pipeline brain. Default deepseek-v3.2
-// (~$0.27/$0.40 per M token, a 60-90s video costs well under ¥0.1 of LLM).
+// 管线的大脑:本机 Claude(worker/claude.mjs)。2026-09-24 起不再走 OpenRouter / DeepSeek。
+// 调用方传的 model 如果是老的 OpenRouter 名字(deepseek/…、google/…),一律换成默认的 Claude 模型。
 import { startCall, endCall, annotateLast, asRepair } from "./calls.mjs";
+import { claudeRun, toClaudeInput, ClaudeLimitError } from "./claude.mjs";
 
-const KEY = process.env.OPENROUTER_API_KEY;
-const MODEL = process.env.LLM_MODEL || "deepseek/deepseek-v3.2";
+const MODEL = process.env.CLAUDE_MODEL || "opus";
+const alias = (m) => (/^(opus|sonnet|haiku)$/.test(String(m)) ? m : MODEL);
 
 export async function chat(messages, { model = MODEL, temperature = 0.7, maxTokens = 4000 } = {}) {
-  if (!KEY) throw new Error("OPENROUTER_API_KEY not in env");
+  const m = alias(model);
+  const input = toClaudeInput(messages);
   let lastErr;
-  let rec = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    rec = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const rec = startCall(input.images.length ? "vision" : "llm", `claude-${m}`, { messages, params: { temperature, max_tokens: maxTokens, attempt } });
     try {
-      const ctrl = new AbortController();
-      const killer = setTimeout(() => ctrl.abort(), 120000); // a hung socket ate 20min once
-      const hasImage = messages.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === "image_url"));
-      rec = startCall(hasImage ? "vision" : "llm", model, { messages, params: { temperature, max_tokens: maxTokens, attempt } });
-      let r;
-      try {
-        r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
-          body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
-          signal: ctrl.signal,
-        });
-      } finally {
-        clearTimeout(killer);
-      }
-      const raw = await r.text();
-      let j = {};
-      try { j = JSON.parse(raw); } catch { /* 非 JSON 的错误页 */ }
-      const text = j.choices?.[0]?.message?.content;
-      endCall(rec, {
-        httpStatus: r.status,
-        status: r.ok && text ? "ok" : "error",
-        response: text ?? raw.slice(0, 4000),
-        usage: j.usage,
-        finish: j.choices?.[0]?.finish_reason,
-      });
-      if (!r.ok) throw new Error(`openrouter ${r.status}: ${JSON.stringify(j).slice(0, 300)}`);
-      if (!text) throw new Error(`openrouter empty response: ${JSON.stringify(j).slice(0, 300)}`);
-      return text;
+      const r = await claudeRun({ ...input, model: m });
+      endCall(rec, { status: r.text ? "ok" : "error", response: r.text, usage: r.usage });
+      if (!r.text) throw new Error("本机 Claude 返回了空回答");
+      return r.text;
     } catch (e) {
-      if (rec && rec.durationMs == null) endCall(rec, { status: "error", error: String(e.message).slice(0, 300) });
+      if (rec.durationMs == null) endCall(rec, { status: "error", error: String(e.message).slice(0, 300) });
       lastErr = e;
-      const net = e.name === "AbortError" || e.message === "fetch failed";
-      console.log(`[llm] attempt ${attempt} failed: ${e.message?.slice(0, 120)}`);
-      if (!net || attempt === 3) break;
-      await new Promise((r) => setTimeout(r, 5000 * attempt));
+      console.log(`[llm] attempt ${attempt} failed: ${String(e.message).slice(0, 120)}`);
+      if (e instanceof ClaudeLimitError) break; // 额度用完了,重试也没用
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 4000));
     }
   }
   throw lastErr;
@@ -161,9 +136,9 @@ export async function chatJSON(messages, opts = {}, validate = null) {
   return obj;
 }
 
-// Vision pass for rendered cards — gemini-2.5-flash-lite ($0.10/M in) actually
-// LOOKS at the PNG and returns { ok, issues[] } against the visual playbook.
-const VISION_MODEL = process.env.VISION_MODEL || "google/gemini-2.5-flash-lite";
+// 看图审稿:让本机 Claude 真的看一眼渲出来的图,按教案挑毛病,返回 { ok, issues[] }
+// 看图也用本机 Claude(sonnet 快,够用)
+const VISION_MODEL = process.env.VISION_MODEL || "sonnet";
 
 export async function reviewImage(pngPath, checklist) {
   const { readFileSync } = await import("node:fs");

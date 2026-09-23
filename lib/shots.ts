@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { requeue } from "@/lib/rerun";
+import { askLLMSafe } from "@/lib/llm-relay";
 import fs from "node:fs";
 import path from "node:path";
 import { projectAssets, projectMediaDir } from "@/lib/media";
@@ -105,31 +106,15 @@ function castRef(projectId: string, cast?: { key: string; src: string }) {
   return `data:${buf[0] === 0x89 ? "image/png" : "image/jpeg"};base64,${buf.toString("base64")}`;
 }
 
-export async function generateScene(projectId: string, prompt: string, who?: string) {
-  if (!SCENE_ON) return { ok: false as const, error: "配图没开(生图要花钱,要先定用哪家),现在不能生成新图" };
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) return { ok: false as const, error: "服务器还没配 LLM key" };
-  const text = String(prompt ?? "").trim();
-  if ([...text].length < 6) return { ok: false as const, error: "画面描述太短,写清楚谁、在哪、在做什么" };
-  const { aspect, style, cast } = await settingsOf(projectId);
-  const ref = who === "main" ? castRef(projectId, cast) : null;
-  const k = sceneKey(text, style, aspect, ref && cast ? cast.key : "");
-  const dir = projectMediaDir(projectId);
-  const file = path.join(dir, `scene-${k}.png`);
-  const url = `/api/media/${projectId}/scene-${k}.png`;
-  if (fs.existsSync(file)) return { ok: true as const, src: url, srcKey: k };
-  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    signal: AbortSignal.timeout(90_000),
-    method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-    body: JSON.stringify(imageRequest(text, style, aspect, process.env.IMAGE_MODEL || undefined, ref)),
-  });
-  const j = await r.json().catch(() => ({}));
-  const img: string | undefined = j.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-  if (!r.ok || !img) return { ok: false as const, error: r.ok ? "没生成出来(可能被安全策略拦了),改改描述再试" : `生图接口 ${r.status}` };
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(file, Buffer.from(img.split(",")[1], "base64"));
-  return { ok: true as const, src: url, srcKey: k };
+export async function generateScene(projectId: string, prompt: string, who?: string): Promise<{ ok: true; src: string; srcKey: string } | { ok: false; error: string }> {
+  // 2026-09-24 她定:不用 OpenRouter / Gemini / MiniMax 生图。生图服务没接之前一律不生成
+  void projectId;
+  void prompt;
+  void who;
+  void imageRequest;
+  void castRef;
+  void sceneKey;
+  return { ok: false, error: "生图服务没接(不用 OpenRouter / Gemini / MiniMax 生图),现在不能生成新图" };
 }
 
 /** 保存前把画面镜头的图补齐:描述改了(缓存键对不上)或还没图的,现在生成 */
@@ -190,8 +175,6 @@ function fieldDoc(f: Field): string {
 }
 
 export async function suggestShots(projectId: string, beat: string, index: number, hint?: string, onlyTpl?: string) {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) return { ok: false as const, error: "服务器还没配 LLM key" };
   const { clips } = await scriptOf(projectId);
   const c = clips.find((x) => x.name === beat);
   if (!c) return { ok: false as const, error: `没有 ${beat} 这一拍` };
@@ -200,15 +183,7 @@ export async function suggestShots(projectId: string, beat: string, index: numbe
   const cur: Shot[] = c.shots ?? fArt.cards?.find((x: { name: string }) => x.name === beat)?.shots ?? [];
   const target = cur[index];
   const catalogText = TEMPLATES.filter((t) => SCENE_ON || t.id !== "scene").map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).filter(Boolean).join(";")}`).join("\n");
-  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    signal: AbortSignal.timeout(60_000),
-    method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: process.env.LLM_MODEL || "deepseek/deepseek-v3.2",
-      temperature: 0.8,
-      max_tokens: 2000,
-      messages: [
+  const llm = await askLLMSafe([
         {
           role: "system",
           content: `你是短视频动态分镜师。${onlyTpl && TPL[onlyTpl] ? `给一个镜头用 ${onlyTpl}(${TPL[onlyTpl].label})模板填内容,出 3 个不同写法。` : "给一个镜头出 3 个不同的替代方案,每个用不同的模板。"}
@@ -223,12 +198,9 @@ ${catalogText}`,
 要换的是第 ${index + 1} 个${onlyTpl ? `,改用 ${onlyTpl} 模板` : target?.tpl ? `(现在是 ${target.tpl},换成别的模板)` : "(新加的镜头)"}。${hint ? `\n她的要求:${hint}` : ""}
 返回 JSON:{"options":[{"tpl":"...","p":{...}},{...},{...}]}`,
         },
-      ],
-    }),
-  });
-  if (!r.ok) return { ok: false as const, error: `LLM 返回 ${r.status}` };
-  const j = await r.json();
-  const text: string = j.choices?.[0]?.message?.content ?? "";
+      ], { tier: "fast", timeoutMs: 120000 });
+  if (!llm.ok) return { ok: false as const, error: llm.error ?? "本机 Claude 没回话" };
+  const text: string = llm.text ?? "";
   const m = text.match(/\{[\s\S]*\}/);
   let options: Shot[] = [];
   try {

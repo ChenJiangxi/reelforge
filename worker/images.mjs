@@ -1,9 +1,8 @@
-// 画面镜头(scene)的配图:OpenRouter 上的 Gemini 图像模型,一张约 7 秒、0.039 美元。
+// 画面镜头(scene)的配图。生图服务目前没接(2026-09-24 她定不用 OpenRouter / Gemini / MiniMax),只用缓存里已有的图。
 // 按「风格 + 画幅 + 画面描述」缓存在 WORK_ROOT/.images/ —— 同一张图不重复花钱;
 // 素材阶段和剪辑阶段都调它(她在网页上改过的镜头剪辑阶段才第一次见到)。
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ffmpeg } from "./ffmpeg.mjs";
 import { startCall, endCall } from "./calls.mjs";
 import { IMAGE_MODEL_DEFAULT, IMAGE_STYLES, sceneKey, imageRequest, castPrompt } from "../shots/image-style.mjs";
 
@@ -17,32 +16,11 @@ export async function sceneImage(prompt, { style = "photo", aspect = "9:16", wor
   mkdirSync(dir, { recursive: true });
   const jpg = join(dir, `${key}.jpg`);
   if (existsSync(jpg)) return { path: jpg, key, cached: true };
-  const req = imageRequest(prompt, style, aspect, IMAGE_MODEL, ref ? dataUrl(ref.path) : null);
-  const rec = startCall("image", IMAGE_MODEL, { messages: [{ role: "user", content: typeof req.messages[0].content === "string" ? req.messages[0].content : req.messages[0].content[0].text + "\n[参考图:主角定妆照]" }], params: { aspect, ref: ref?.key } });
-  let lastErr;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
-        body: JSON.stringify(req),
-        signal: AbortSignal.timeout(120_000),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(`生图接口 ${r.status}:${JSON.stringify(j).slice(0, 160)}`);
-      const url = j.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-      if (!url) throw new Error(`生图没返回图片(可能被安全策略拦了):${String(j.choices?.[0]?.message?.content ?? "").slice(0, 80)}`);
-      const png = join(dir, `${key}.png`);
-      writeFileSync(png, Buffer.from(url.split(",")[1], "base64"));
-      await ffmpeg(["-i", png, "-q:v", "3", jpg]);
-      endCall(rec, { status: "ok", response: `图 ${key}`, usage: j.usage });
-      return { path: jpg, key, cached: false, cost: j.usage?.cost };
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  endCall(rec, { status: "error", error: String(lastErr?.message ?? lastErr).slice(0, 300) });
-  throw lastErr;
+  // 2026-09-24 她定:不用 OpenRouter / Gemini / MiniMax 生图。生图服务没接之前,这里只认缓存里已有的图
+  void imageRequest;
+  void startCall;
+  void endCall;
+  throw new Error("生图服务没接(不用 OpenRouter / Gemini / MiniMax 生图);要画面镜头得先定一个她同意的来源");
 }
 
 /** 本地图 → data URL(Remotion 渲染时直接塞进参数,不用再起一个文件服务)。网页端存的是 png,按文件头认 */

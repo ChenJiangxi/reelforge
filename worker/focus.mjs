@@ -10,7 +10,7 @@ import { ffmpeg, ffprobeInfo } from "./ffmpeg.mjs";
 import { fileSha } from "./segcache.mjs";
 import { spokenIndex, findSpoken } from "./reveal.mjs";
 
-const VISION_MODEL = process.env.VISION_MODEL || "google/gemini-2.5-flash-lite";
+const VISION_MODEL = process.env.VISION_MODEL || "sonnet"; // 本机 Claude 看图(box_2d 实测和 Gemini 一样准)
 const FILL = 0.72;
 const EXPAND = 1.5;
 const MIN_ZOOM = 1.15;
