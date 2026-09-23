@@ -1,8 +1,7 @@
 import { NextRequest } from "next/server";
 import { createReadStream, existsSync, statSync } from "fs";
-import path from "path";
 import { Readable } from "stream";
-import { MEDIA_DIR, contentTypeFor } from "@/lib/media";
+import { contentTypeFor, mediaPath } from "@/lib/media";
 
 // Streams a generated media file from MEDIA_DIR/<projectId>/<file>.
 // Range-supported so <video> seeking works. Files are written by the worker
@@ -13,9 +12,9 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string; file: string[] }> },
 ) {
   const { projectId, file } = await params;
-  const rel = file.map((s) => path.basename(s)).join("/");
-  const filePath = path.join(MEDIA_DIR, projectId, rel);
-  if (!filePath.startsWith(path.join(MEDIA_DIR, projectId)) || !existsSync(filePath)) {
+  // 每一段都校验,不能靠 basename:projectId 本身也是用户给的(实见 ..%2Fdata 能读到数据库)
+  const filePath = mediaPath(projectId, file);
+  if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
     return new Response("not found", { status: 404 });
   }
 

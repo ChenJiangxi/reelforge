@@ -3,7 +3,7 @@ import { createWriteStream, readdirSync, statSync, mkdirSync } from "fs";
 import path from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { MEDIA_DIR, projectMediaDir, contentTypeFor } from "@/lib/media";
+import { MEDIA_DIR, isSafeId, projectMediaDir } from "@/lib/media";
 
 // Project asset library: 录屏/图片 she uploads. Files live in
 // MEDIA_DIR/<id>/assets/ and the list is derived by scanning the dir —
@@ -18,6 +18,7 @@ function assetName(raw: string): string {
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  if (!isSafeId(id)) return NextResponse.json({ error: "bad id" }, { status: 400 });
   const dir = path.join(MEDIA_DIR, id, "assets");
   let files: string[] = [];
   try { files = readdirSync(dir); } catch { /* no assets yet */ }
@@ -34,6 +35,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  if (!isSafeId(id)) return NextResponse.json({ error: "bad id" }, { status: 400 });
   const form = await req.formData().catch(() => null);
   if (!form) return NextResponse.json({ error: "multipart required" }, { status: 400 });
   const dir = path.join(projectMediaDir(id), "assets");

@@ -8,7 +8,23 @@ export const MEDIA_DIR = process.env.MEDIA_DIR
   ? path.resolve(process.env.MEDIA_DIR)
   : path.join(process.cwd(), "data", "media");
 
+// 项目 id 只能是 cuid 或 _global —— 以前直接拼路径,/api/media/..%2Fdata/reelforge.db
+// 不登录就能把数据库下载走(2026-09-23 发现,日志里没有被利用过)。
+export function isSafeId(id: string): boolean {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(id);
+}
+
+/** MEDIA_DIR/<projectId>/<segments…>,任何一段不干净、或者解析后跑出项目目录,返回 null */
+export function mediaPath(projectId: string, segments: string[]): string | null {
+  if (!isSafeId(projectId)) return null;
+  if (!segments.length || segments.some((s) => !s || s === "." || s === ".." || /[\\/\0]/.test(s))) return null;
+  const root = path.resolve(MEDIA_DIR, projectId);
+  const full = path.resolve(root, ...segments);
+  return full.startsWith(root + path.sep) ? full : null;
+}
+
 export function projectMediaDir(projectId: string): string {
+  if (!isSafeId(projectId)) throw new Error(`bad project id: ${projectId}`);
   const dir = path.join(MEDIA_DIR, projectId);
   fs.mkdirSync(dir, { recursive: true });
   return dir;

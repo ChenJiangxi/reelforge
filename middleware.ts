@@ -20,10 +20,16 @@ export async function middleware(req: NextRequest) {
   if (!want) return NextResponse.next();
 
   const { pathname } = req.nextUrl;
+  // 媒体和教案:浏览器带 cookie,worker 带自己的 Bearer token —— 两样都没有就拒。
+  // 以前这两条对所有人开放(理由是"projectId 猜不到"),但 _global 素材库的 id 是固定的,
+  // 再加上路径没校验,整个 /opt/reelforge 都能被读(见 lib/media.ts mediaPath)。
+  const workerToken = process.env.WORKER_TOKEN;
+  const isWorker = !!workerToken && req.headers.get("authorization") === `Bearer ${workerToken}`;
+  if ((pathname.startsWith("/api/media/") || (req.method === "GET" && pathname.startsWith("/api/playbooks/"))) && isWorker) {
+    return NextResponse.next();
+  }
   if (
     pathname.startsWith("/api/worker/") ||
-    pathname.startsWith("/api/media/") || // media URLs carry an unguessable projectId; worker fetches them too
-    (req.method === "GET" && pathname.startsWith("/api/playbooks/")) || // worker pulls playbooks
     pathname.startsWith("/login") ||
     pathname.startsWith("/api/login") ||
     pathname === "/favicon.ico"
