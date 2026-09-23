@@ -51,7 +51,10 @@ export function AssetLibrary({ assets }: { assets: Asset[] }) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {assets.map((a) => (
           <div key={a.name} className="overflow-hidden rounded-lg bg-muted/40">
-            {a.kind === "video" ? (
+            {a.kind === "page" ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={a.url.replace(/\.page\.json(\?.*)?$/, ".page-0.png$1")} alt={a.name} className="aspect-video w-full object-cover object-top" />
+            ) : a.kind === "video" ? (
               <video src={a.url} controls preload="metadata" className="aspect-video w-full bg-black object-cover" />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
@@ -59,7 +62,7 @@ export function AssetLibrary({ assets }: { assets: Asset[] }) {
             )}
             <div className="flex items-center justify-between gap-2 px-2.5 py-2">
               <span className="truncate text-xs" title={a.name}>
-                {a.kind === "video" ? "🎬 " : ""}
+                {a.kind === "video" ? "🎬 " : a.kind === "page" ? "📱 " : ""}
                 {a.name}
               </span>
               <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{fmtSize(a.size)}</span>

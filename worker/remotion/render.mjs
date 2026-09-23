@@ -123,3 +123,17 @@ export async function renderCam({ srcPath, kind = "video", keys, W, H, frames, f
   void fps;
   return out;
 }
+
+/** 把本地文件放进打包目录的 public/ 下(Remotion 渲染时只能从这里读本地文件),返回 staticFile 用的名字 */
+export async function stagePublic(workRoot, files) {
+  const serveUrl = await getBundle(workRoot);
+  const { copyFileSync, existsSync: ex, statSync } = await import("node:fs");
+  const out = [];
+  for (const { path, name } of files) {
+    const dest = join(serveUrl, "public", name);
+    mkdirSync(dirname(dest), { recursive: true });
+    if (!ex(dest) || statSync(dest).size !== statSync(path).size) copyFileSync(path, dest);
+    out.push(name);
+  }
+  return out;
+}

@@ -88,6 +88,8 @@ export function cueTexts(tpl, p = {}) {
       return [String(p.peak ?? "")];
     case "scene":
       return [p.big ?? ""];
+    case "page":
+      return (Array.isArray(p.focus) ? p.focus : []).map((x) => String(x ?? ""));
     default:
       return [];
   }

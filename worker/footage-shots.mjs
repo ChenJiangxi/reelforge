@@ -15,6 +15,7 @@ import { previewBeat, shotCountFor, orderByFrom } from "../shots/timing.mjs";
 import { renderBeatStill } from "./remotion/render.mjs";
 import { sceneImage, sceneKey, dataUrl, pool, castImage } from "./images.mjs";
 import { repairDecisions } from "./validate.mjs";
+import { loadPages, withPages } from "./pages.mjs";
 
 const OLD_THEME = { dark: "ink", gradient: "dusk", paper: "paper" };
 
@@ -61,6 +62,10 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
     }
   }
 
+  // 产品页:页面上的字给排镜头的 LLM 看,也用来查它写的 focus 是不是页面上真有
+  const pages = assets.some((a) => a.kind === "page") ? await loadPages(assets, workDir(item, "pages")) : new Map();
+  const pageMemo = new Map();
+
   // 1) 分出哪些拍要 LLM 排
   const fixed = new Map(); // name → {shots, by, why}
   const want = [];
@@ -88,9 +93,9 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
     const source = `${clips.map((c) => c.text).join("\n")}\n${material}\n${clips.map((c) => c.visual || "").join("\n")}`;
     const fixedList = clips.map((c, i) => ({ c, i })).filter(({ c }) => fixed.has(c.name)).map(({ c, i }) => ({ name: c.name, text: c.text, shots: fixed.get(c.name).shots, order: i }));
     const out = await chatJSON(
-      planPrompt(item, want, fixedList, { assets, material, note: item.reviewNote || "", theme }),
+      planPrompt(item, want, fixedList, { assets, material, note: item.reviewNote || "", theme, pages }),
       { temperature: 0.6, maxTokens: 9000 },
-      validatePlan(want, new Map(fixedList.map((f) => [f.name, f.shots])), source, assetNames, clips.map((c) => c.name), new Map(clips.map((c) => [c.name, c.text])), !!castDesc && !item.reviewNote),
+      validatePlan(want, new Map(fixedList.map((f) => [f.name, f.shots])), source, assetNames, clips.map((c) => c.name), new Map(clips.map((c) => [c.name, c.text])), !!castDesc && !item.reviewNote, pages),
     );
     // 主角:有打回批注时可以换人;没有批注就沿用上一版的主角(免得每次重做换一张脸)
     const nextCast = String(out.cast?.main ?? "").trim();
@@ -182,6 +187,11 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
       decisions.push({ beat, topic: "素材", choice: `「${missing[0].asset}」不在素材库里,这个镜头去掉了`, warn: true });
       shots = shots.filter((s) => !s.asset || assetNames.includes(s.asset));
     }
+    const lostPage = shots.filter((s) => s.tpl === "page" && !pages.has(String(s.p?.page ?? "")));
+    if (lostPage.length) {
+      decisions.push({ beat, topic: "素材", choice: `产品页「${lostPage[0].p?.page ?? ""}」不在素材库里,这个镜头去掉了`, warn: true });
+      shots = shots.filter((s) => !lostPage.includes(s));
+    }
     if (by === "ai") {
       const o = orderByFrom(shots, c.text);
       if (o.changed) {
@@ -200,7 +210,7 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
     shotTotal += est.spans.length;
     secTotal += est.frames / 30;
     for (const s of shots) {
-      const k = s.asset ? "asset" : s.tpl;
+      const k = s.asset || s.tpl === "page" ? "asset" : s.tpl;
       tplCount[k] = (tplCount[k] || 0) + 1;
     }
     // 缩略图:同一拍、镜头和配色都没变就不重渲不重传
@@ -212,7 +222,7 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
       if (sf) {
         mark(item, beat, "出镜头缩略图");
         const png = join(workDir(item, "cards"), `${beat}-shots.png`);
-        const rs = forRender(shots);
+        const rs = await withPages(forRender(shots), pages, workDir(item, "pages"), workDir(item, ""), pageMemo);
         const props = { theme, W: size.width, H: size.height, frames: est.frames, shots: est.spans.map((sp) => ({ tpl: rs[sp.i].tpl || "lines", p: rs[sp.i].p || {}, from: sp.fromFrame, frames: sp.frames, cues: sp.cues })) };
         await renderBeatStill(props, sf.frame, png, { workRoot: workDir(item, "") });
         mark(item, beat, "上传缩略图");
@@ -247,7 +257,7 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
   decisions.unshift({
     topic: "构成",
     choice: `${clips.length} 拍 · ${shotTotal} 个镜头 · 平均 ${(secTotal / Math.max(1, shotTotal)).toFixed(1)} 秒换一次画面`,
-    why: `用了 ${variety} 种模板:${cardsOnly.sort((a, b) => b[1] - a[1]).map(([k, n]) => `${TPL_LABEL[k] ?? k}×${n}`).join("、")}${tplCount.asset ? `;素材镜头 ${tplCount.asset} 个` : ""}`,
+    why: `用了 ${variety} 种模板:${cardsOnly.sort((a, b) => b[1] - a[1]).map(([k, n]) => `${TPL_LABEL[k] ?? k}×${n}`).join("、")}${tplCount.asset ? `;产品画面(产品页 + 素材)镜头 ${tplCount.asset} 个` : ""}`,
   });
   const lockedN = [...fixed.values()].filter((f) => f.by === "you").length;
   const reusedN = [...fixed.values()].filter((f) => f.by === "reuse").length;

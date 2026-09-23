@@ -9,8 +9,35 @@ import { Beat, type BeatProps, type ShotSpec } from "@/shots/Shot";
 import { estimatedIndex, fromPositions, previewBeat } from "@/shots/timing.mjs";
 import { TEMPLATES, TPL, type Field, type Shot } from "@/lib/shot-catalog";
 import { IMAGE_STYLE_LABELS, THEME_LABELS } from "@/lib/stages";
+import { findText } from "@/shots/page.mjs";
 
-type Asset = { name: string; url: string; kind: string };
+type Asset = { name: string; url: string; kind: string; file?: string };
+/** 录好的产品页:切片图地址 + 每段字的位置(预览时塞给「产品页」镜头) */
+type PageLayout = { cssW: number; cssH: number; viewportH: number; captured?: string; tiles: { src: string; y: number; h: number }[]; leaves: { t: string; y: number }[] };
+type Pages = Record<string, PageLayout>;
+
+/** 素材库里的产品页 → 页面数据(切片地址换成网页能直接读的) */
+function usePages(assets: Asset[]): Pages {
+  const [pages, setPages] = useState<Pages>({});
+  useEffect(() => {
+    const list = assets.filter((a) => a.kind === "page");
+    if (!list.length) return;
+    let alive = true;
+    Promise.all(
+      list.map(async (a) => {
+        const doc = await fetch(a.url).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        if (!doc?.tiles) return null;
+        const tile = (f: string) => a.url.replace(/[^/?]+\.page\.json(\?.*)?$/, `${encodeURIComponent(f)}$1`);
+        const layout: PageLayout = { ...doc, tiles: doc.tiles.map((t: { file: string; y: number; h: number }) => ({ src: tile(t.file), y: t.y, h: t.h })) };
+        return [a.name, layout] as const;
+      }),
+    ).then((rows) => alive && setPages(Object.fromEntries(rows.filter((r): r is readonly [string, PageLayout] => !!r))));
+    return () => {
+      alive = false;
+    };
+  }, [assets]);
+  return pages;
+}
 export type ShotBeat = { name: string; text: string; image?: string; shots: Shot[]; mine: boolean };
 
 function sizeOf(aspect: string) {
@@ -19,19 +46,20 @@ function sizeOf(aspect: string) {
   return { W: 1080, H: 1920 };
 }
 
-const labelOf = (s: Shot) => (s.asset ? "素材" : TPL[s.tpl ?? ""]?.label ?? s.tpl ?? "?");
+const labelOf = (s: Shot) => (s.asset ? "素材" : s.tpl === "page" ? `产品页${s.p?.page ? `·${brief(String(s.p.page), 6)}` : ""}` : TPL[s.tpl ?? ""]?.label ?? s.tpl ?? "?");
 const brief = (s: string, n = 8) => ([...s].length > n ? `${[...s].slice(0, n).join("")}…` : s);
 
 /** 这一拍在网页上怎么播:按字数估时长(还没按配音对时间) */
-function beatProps(text: string, shots: Shot[], theme: string, aspect: string, assets: Asset[]): BeatProps & { frames: number } {
+function beatProps(text: string, shots: Shot[], theme: string, aspect: string, assets: Asset[], pages: Pages = {}): BeatProps & { frames: number } {
   const { W, H } = sizeOf(aspect);
   const est = previewBeat(text, shots);
   const specs: ShotSpec[] = est.spans.map((sp: { i: number; fromFrame: number; frames: number; cues: (number | null)[] }) => {
     const s = shots[sp.i];
     const a = s.asset ? assets.find((x) => x.name === s.asset) : null;
+    const page = s.tpl === "page" ? pages[String(s.p?.page ?? "")] : undefined;
     return {
       tpl: s.tpl ?? "",
-      p: s.p ?? {},
+      p: page ? { ...(s.p ?? {}), __page: page } : (s.p ?? {}),
       from: sp.fromFrame,
       frames: sp.frames,
       cues: sp.cues.map((c) => (c == null ? NaN : c)),
@@ -96,6 +124,7 @@ export function ShotBoard({
       .catch(() => {});
   }, [projectId]);
 
+  const pages = usePages(assets);
   const total = beats.reduce((n, b) => n + b.shots.length, 0);
   const cur = beats.find((b) => b.name === sel) ?? null;
 
@@ -220,6 +249,7 @@ export function ShotBoard({
                 beat={cur}
                 theme={theme}
                 assets={assets}
+                pages={pages}
                 sceneOn={sceneOn}
                 onDone={(m) => {
                   setMsg(m);
@@ -241,6 +271,7 @@ function ShotEditor({
   beat,
   theme,
   assets,
+  pages,
   sceneOn,
   onDone,
 }: {
@@ -249,6 +280,7 @@ function ShotEditor({
   beat: ShotBeat;
   theme: string;
   assets: Asset[];
+  pages: Pages;
   sceneOn: boolean;
   onDone: (msg: string | null) => void;
 }) {
@@ -258,7 +290,7 @@ function ShotEditor({
   const [err, setErr] = useState<string | null>(null);
   const [cands, setCands] = useState<{ index: number; options: Shot[] } | null>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(beat.shots);
-  const props = useMemo(() => beatProps(beat.text, draft, theme, aspect, assets), [beat.text, draft, theme, aspect, assets]);
+  const props = useMemo(() => beatProps(beat.text, draft, theme, aspect, assets, pages), [beat.text, draft, theme, aspect, assets, pages]);
   const { W, H } = sizeOf(aspect);
   const pw = W > H ? 420 : 270;
 
@@ -275,20 +307,22 @@ function ShotEditor({
       return n;
     });
 
-  async function suggest(k: number, tpl?: string) {
+  async function suggest(k: number, tpl?: string, page?: string) {
     setBusy(tpl ? `fill-${k}` : `sug-${k}`);
     setErr(null);
     const r = await fetch(`/api/project/${projectId}/shots/suggest`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ beat: beat.name, index: k, tpl }),
+      body: JSON.stringify({ beat: beat.name, index: k, tpl, hint: page ? `用产品页「${page}」,focus 挑页面上和这句台词说的同一件事的字` : undefined }),
     });
     const j = await r.json().catch(() => ({}));
     setBusy(null);
     if (!r.ok) return setErr(j.error ?? "没出来,再点一次");
     const options: Shot[] = (j.options ?? []).map((o: Shot) => ({ ...o, from: k ? draft[k]?.from ?? "" : "" }));
     if (tpl) {
-      if (options[0]) update(k, options[0]);
+      const pick = page ? options.find((o) => o.p?.page === page) : options[0];
+      if (pick) update(k, pick);
+      else if (page) setErr("AI 没挑出页面上的字,在下面的页面文字里点几段");
     } else setCands({ index: k, options });
   }
 
@@ -394,7 +428,7 @@ function ShotEditor({
                       }}
                       className="shrink-0 rounded-md border border-border p-1 hover:border-accent/60"
                     >
-                      <BeatPlayer props={beatProps(beat.text, [{ ...o, from: "" }], theme, aspect, assets)} width={W > H ? 160 : 96} controls={false} />
+                      <BeatPlayer props={beatProps(beat.text, [{ ...o, from: "" }], theme, aspect, assets, pages)} width={W > H ? 160 : 96} controls={false} />
                       <span className="mt-0.5 block text-[10px] text-muted-foreground">{labelOf(o)}</span>
                     </button>
                   ))}
@@ -407,20 +441,33 @@ function ShotEditor({
                   <label className="flex items-center gap-1 text-muted-foreground">
                     模板
                     <select
-                      value={s.asset ? `asset:${s.asset}` : s.tpl}
+                      value={s.asset ? `asset:${s.asset}` : s.tpl === "page" ? `page:${s.p?.page ?? ""}` : s.tpl}
                       disabled={!!busy}
                       onChange={(e) => {
                         const v = e.target.value;
                         if (v.startsWith("asset:")) update(k, { asset: v.slice(6), from: s.from });
-                        else suggest(k, v); // 换了模板:让 AI 按新模板把内容填上,她再改
+                        else if (v.startsWith("page:")) {
+                          // 换成产品页:先放上页面,再让 AI 按这句台词挑要推近的字(挑不出来就自己在下面点)
+                          const keep = s.tpl === "page" && Array.isArray(s.p?.focus) ? (s.p?.focus as string[]) : [];
+                          update(k, { tpl: "page", from: s.from, p: { page: v.slice(5), focus: keep, mode: "phone" } });
+                          if (!keep.length) suggest(k, "page", v.slice(5));
+                        } else suggest(k, v); // 换了模板:让 AI 按新模板把内容填上,她再改
                       }}
                       className="rounded border border-border bg-background px-1 py-0.5 text-foreground"
                     >
-                      {TEMPLATES.filter((t) => sceneOn || t.id !== "scene" || s.tpl === "scene").map((t) => (
+                      {TEMPLATES.filter((t) => t.id !== "page" && (sceneOn || t.id !== "scene" || s.tpl === "scene")).map((t) => (
                         <option key={t.id} value={t.id}>
                           {t.label}
                         </option>
                       ))}
+                      {assets
+                        .filter((a) => a.kind === "page")
+                        .map((a) => (
+                          <option key={`p-${a.name}`} value={`page:${a.name}`}>
+                            产品页 · {brief(a.name, 14)}
+                          </option>
+                        ))}
+                      {s.tpl === "page" && !assets.some((a) => a.kind === "page" && a.name === s.p?.page) && <option value={`page:${s.p?.page ?? ""}`}>产品页 · {String(s.p?.page ?? "")}(素材库里没有了)</option>}
                       {assets
                         .filter((a) => a.kind === "video" || a.kind === "image")
                         .map((a) => (
@@ -472,6 +519,13 @@ function ShotEditor({
                     </div>
                   </div>
                 )}
+                {s.tpl === "page" && (
+                  <PagePicker
+                    page={pages[String(s.p?.page ?? "")]}
+                    focus={Array.isArray(s.p?.focus) ? (s.p?.focus as string[]) : []}
+                    onChange={(focus) => update(k, { ...s, p: { ...(s.p ?? {}), focus } })}
+                  />
+                )}
                 {s.tpl &&
                   TPL[s.tpl]?.fields.map((f) => (
                     <FieldInput key={f.key} f={f} v={s.p?.[f.key]} onChange={(v) => update(k, { ...s, p: { ...(s.p ?? {}), [f.key]: v } })} />
@@ -515,6 +569,47 @@ function ShotEditor({
             </button>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** 产品页镜头:页面上的字列出来,点一下加进「推近划线」;已选的里面页面上找不到的标红 */
+function PagePicker({ page, focus, onChange }: { page?: PageLayout; focus: string[]; onChange: (f: string[]) => void }) {
+  const [q, setQ] = useState("");
+  const items = useMemo(() => {
+    if (!page) return [];
+    const seen = new Set<string>();
+    return [...page.leaves]
+      .sort((a, b) => a.y - b.y)
+      .map((l) => String(l.t).replace(/\s+/g, " ").trim())
+      .filter((t) => t.length >= 2 && !seen.has(t) && (seen.add(t), true));
+  }, [page]);
+  if (!page) return <p className="text-[11px] text-destructive">这张产品页还没加载出来(或者素材库里没有了)</p>;
+  const bad = focus.filter((f) => f.trim() && !findText(page, f)?.whole);
+  const shown = items.filter((t) => !q || t.includes(q)).slice(0, 80);
+  return (
+    <div className="space-y-1">
+      {bad.length > 0 && <p className="text-[11px] text-destructive">页面上找不到:{bad.join("、")} —— 从下面点,或者只留页面上原有的几个字</p>}
+      <span className="flex items-center gap-2 text-muted-foreground">
+        页面上的字(点一下加进推近,最多 3 个)
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜" className="w-24 rounded border border-border bg-background px-1.5 py-0.5 text-foreground" />
+      </span>
+      <div className="max-h-36 space-y-0.5 overflow-y-auto rounded border border-border/70 p-1">
+        {shown.map((t) => (
+          <button
+            key={t}
+            disabled={focus.length >= 3 && !focus.includes(t)}
+            onClick={() => {
+              const piece = [...t].slice(0, 20).join("");
+              onChange(focus.includes(piece) ? focus.filter((x) => x !== piece) : [...focus.filter((x) => x.trim()), piece]);
+            }}
+            className={`block w-full truncate rounded px-1 text-left text-[11px] ${focus.includes([...t].slice(0, 20).join("")) ? "bg-accent/20 text-foreground" : "text-muted-foreground hover:bg-muted"} disabled:opacity-40`}
+            title={t}
+          >
+            {t}
+          </button>
+        ))}
       </div>
     </div>
   );

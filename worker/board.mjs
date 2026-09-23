@@ -45,13 +45,15 @@ export const stageStatus = (ids) => api(`/api/worker/status?ids=${ids.map(encode
 // Uploads go over a slow international link (tens of KB/s); use raw http with
 // a 15-minute timeout and retries — undici's fetch defaults give up mid-file.
 // onProgress(sent, total):分块写,每写一块报一次 —— 页面上显示"上传成片 60%"
-export async function upload(projectId, absPath, name, attempt = 1, onProgress = null) {
+// fields:额外的表单字段,比如 {into:"assets"} 直接放进素材库
+export async function upload(projectId, absPath, name, attempt = 1, onProgress = null, fields = {}) {
   const { readFile } = await import("node:fs/promises");
   const buf = await readFile(absPath);
   const fname = name || absPath.split("/").pop();
   const boundary = "----rf" + Date.now().toString(36);
   const head = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="projectId"\r\n\r\n${projectId}\r\n` +
+    Object.entries(fields).map(([k, v]) => `--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`).join("") +
     `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fname}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
   );
   const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
@@ -112,7 +114,7 @@ export async function upload(projectId, absPath, name, attempt = 1, onProgress =
   } catch (e) {
     if (attempt < 4 && !/-> 507/.test(String(e.message))) {
       await new Promise((r) => setTimeout(r, 15000 * attempt));
-      return upload(projectId, absPath, name, attempt + 1, onProgress);
+      return upload(projectId, absPath, name, attempt + 1, onProgress, fields);
     }
     throw e;
   }

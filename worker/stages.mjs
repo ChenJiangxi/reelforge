@@ -19,6 +19,7 @@ import { shotsReady, shotsVersion, renderBeat, renderCam } from "./remotion/rend
 import { timeShots, spokenIndex as shotIndex } from "../shots/timing.mjs";
 import { TPL_LABEL, normalizeShots, SCENE_ON } from "./shots.mjs";
 import { sceneImage, sceneKey, dataUrl } from "./images.mjs";
+import { loadPages, withPages } from "./pages.mjs";
 
 export const WORK_ROOT = process.env.WORK_DIR || join(process.cwd(), "data", "work");
 const GAP = 0.18; // 两拍之间的留白(秒)。原来 0.25,叠上 TTS 自带的空白就太长了
@@ -931,6 +932,9 @@ async function ensureInputs(item) {
 
   // per-clip visual source: 真素材(录屏/图片) > 字卡
   const visuals = [];
+  // 产品页(录好的真实页面):镜头里用到才下载切片,一次剪辑里每张页面只准备一次
+  const pages = assets.some((a) => a.kind === "page") ? await loadPages(assets, workDir(item, "pages")) : new Map();
+  const pageMemo = new Map();
   for (let i = 0; i < cardsMeta.length; i++) {
     const cm = cardsMeta[i];
     mark(item, cm.name, "下载画面");
@@ -947,9 +951,12 @@ async function ensureInputs(item) {
         if (!asset) throw new Error(`${cm.name} 的镜头用了素材「${s.asset}」,素材库里没有了(可能被删了)`);
         assetPaths[s.asset] = { path: await downloadCached(asset.url, join(assetsDir, s.asset)), kind: asset.kind };
       }
+      for (const s of shots) {
+        if (s.tpl === "page" && !pages.has(String(s.p?.page ?? ""))) throw new Error(`${cm.name} 的产品页镜头用了「${s.p?.page ?? ""}」,素材库里没有这张产品页(可能被删了,或者名字改了)`);
+      }
       const theme = up.script?.editSettings?.theme || cm.theme || "ink";
       const imageStyle = up.script?.editSettings?.imageStyle || "photo";
-      visuals.push({ kind: "shots", source: "shots", shots, theme, imageStyle, cast: up.footage?.cast?.main || null, assetPaths, by: sc?.shots?.length ? "you" : "auto", overrides, inserts });
+      visuals.push({ kind: "shots", source: "shots", shots, theme, imageStyle, cast: up.footage?.cast?.main || null, assetPaths, pages, pageMemo, by: sc?.shots?.length ? "you" : "auto", overrides, inserts });
     } else if (cm.anim) {
       const p = await downloadCached(cm.anim, join(cardsDir, `${cm.name}.webm`));
       visuals.push({ kind: "anim", source: "anim", path: p, overrides, inserts });
@@ -1333,12 +1340,20 @@ async function renderShotsBeat(item, v, { beat, words, beatDur, segDur, W, H, fp
         }
         withImg.push(path ? { ...s0.p, src: dataUrl(path) } : { ...s0.p, src: undefined });
       }
+      // 产品页镜头:切片放进渲染目录,塞上页面数据
+      const runShots = await withPages(
+        run.spans.map((sp, j) => ({ tpl: v.shots[sp.i].tpl, p: withImg[j] })),
+        v.pages || new Map(),
+        workDir(item, "pages"),
+        WORK_ROOT,
+        v.pageMemo,
+      );
       const props = {
         theme: v.theme,
         W,
         H,
         frames: nFrames,
-        shots: run.spans.map((sp, j) => ({ tpl: v.shots[sp.i].tpl, p: withImg[j], from: sp.fromFrame - f0, frames: sp.frames, cues: sp.cues })),
+        shots: run.spans.map((sp, j) => ({ tpl: runShots[j].tpl, p: runShots[j].p, from: sp.fromFrame - f0, frames: sp.frames, cues: sp.cues })),
       };
       mark(item, beat, `渲镜头动画(${run.spans.length} 个)`);
       const res = await cached(part, { kind: "shots", props, tv: shotsVersion() }, async (tmp) => {
@@ -1387,7 +1402,7 @@ async function renderShotsBeat(item, v, { beat, words, beatDur, segDur, W, H, fp
   });
   // 音效/死帧质检要知道"画面在哪些时刻有变化":镜头切点 + 镜头里元素出现的时刻
   const reveals = spans.flatMap((sp) => [sp.start, ...sp.cues.filter((c) => c != null).map((c) => sp.start + c / fps)]).filter((t) => t > 0.5 && t < beatDur - 0.3);
-  const assetSec = spans.filter((sp) => v.shots[sp.i].asset).reduce((n, sp) => n + Math.max(0, Math.min(beatDur, sp.end) - sp.start), 0);
+  const assetSec = spans.filter((sp) => v.shots[sp.i].asset || v.shots[sp.i].tpl === "page").reduce((n, sp) => n + Math.max(0, Math.min(beatDur, sp.end) - sp.start), 0);
   return { decisions, reused: reusedParts === parts.length, reveals, assetSec };
 }
 
@@ -1787,18 +1802,18 @@ async function edit(item) {
 
   // 质检:产品画面占比(有产品录屏的项目至少一半)、画面里的字有没有网址
   for (const o of overlays) if (o.mode !== "pip") productSec += o.t1 - o.t0;
-  const hasProduct = (item.assets || []).some((a) => a.kind === "video");
+  const hasProduct = (item.assets || []).some((a) => a.kind === "video" || a.kind === "page");
   const share = totalDur > 0 ? productSec / totalDur : 0;
   const onScreen = [
     ...meta.map((m) => m.text),
-    ...visuals.flatMap((v) => (v.shots || []).map((sh) => JSON.stringify({ ...(sh.p || {}), src: undefined, prompt: undefined, srcKey: undefined }))),
+    ...visuals.flatMap((v) => (v.shots || []).map((sh) => JSON.stringify({ ...(sh.p || {}), src: undefined, prompt: undefined, srcKey: undefined, __page: undefined }))),
   ];
   const urls = [...new Set(onScreen.flatMap((t) => String(t).match(new RegExp(URL_RE.source, "gi")) || []))];
   const audit = [
     {
       topic: "产品画面",
       choice: `${Math.round(share * 100)}%(${productSec.toFixed(1)}s / ${totalDur.toFixed(1)}s)`,
-      why: hasProduct ? (share < 0.5 ? "有产品录屏的片子,真产品画面要占一半以上(ops-bilibili 的规矩)—— 多用录屏镜头,或者在时间轴上插录屏" : "达到一半以上") : "素材库里没有产品录屏,不要求",
+      why: hasProduct ? (share < 0.5 ? "有产品录屏/产品页的片子,真产品画面要占一半以上(ops-bilibili 的规矩)—— 多用产品页镜头、录屏镜头,或者在时间轴上插录屏" : "达到一半以上") : "素材库里没有产品录屏和产品页,不要求",
       warn: hasProduct && share < 0.5,
     },
     ...(urls.length ? [{ topic: "网址", choice: `画面上出现了 ${urls.join("、")}`, why: "片内不许出网址(所有平台)—— 改掉这些字", warn: true }] : []),

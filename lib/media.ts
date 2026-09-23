@@ -38,7 +38,7 @@ export function safeFileName(name: string): string {
   return base || "file";
 }
 
-export type AssetEntry = { name: string; url: string; kind: "video" | "image"; size: number; global?: boolean };
+export type AssetEntry = { name: string; url: string; kind: "video" | "image" | "page"; size: number; global?: boolean; file?: string };
 
 const VIDEO_RE = /\.(mp4|mov|webm|m4v)$/i;
 const MEDIA_RE = /\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)$/i;
@@ -57,6 +57,25 @@ export function listAssets(ownerId: string, opts: { global?: boolean } = {}): As
   }
   const out: AssetEntry[] = [];
   for (const f of files) {
+    // 产品页(worker/capture.mjs 录的):<短名>.page.json 是素材本身,切片图和整页原图不单独列出
+    if (/\.page\.json$/.test(f)) {
+      try {
+        const st = fs.statSync(path.join(dir, f));
+        const doc = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as { name?: string };
+        out.push({
+          name: doc.name || f.replace(/\.page\.json$/, ""),
+          url: `/api/media/${ownerId}/assets/${encodeURIComponent(f)}?v=${Math.round(st.mtimeMs)}`,
+          kind: "page",
+          size: st.size,
+          file: f,
+          ...(opts.global ? { global: true } : {}),
+        });
+      } catch {
+        /* 坏文件跳过 */
+      }
+      continue;
+    }
+    if (/\.page-(\d+|full)\.png$/.test(f)) continue;
     if (!MEDIA_RE.test(f)) continue;
     let st: fs.Stats;
     try {

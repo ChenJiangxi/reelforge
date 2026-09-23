@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createWriteStream, statfsSync } from "fs";
+import { createWriteStream, mkdirSync, statfsSync } from "fs";
 import path from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
@@ -22,7 +22,10 @@ export async function POST(req: NextRequest) {
   }
 
   const name = safeFileName(file.name || "file");
-  const dir = projectMediaDir(projectId);
+  // into=assets:直接放进素材库(录产品页时用)
+  const into = String(form.get("into") ?? "");
+  const dir = into === "assets" ? path.join(projectMediaDir(projectId), "assets") : projectMediaDir(projectId);
+  mkdirSync(dir, { recursive: true });
   // 盘满之前就拒收,并且说清楚是服务器的盘 —— 不然写到一半 ENOSPC,worker 那边只看到一个 500
   try {
     const st = statfsSync(dir);
@@ -42,5 +45,5 @@ export async function POST(req: NextRequest) {
   const nodeStream = Readable.fromWeb(file.stream() as never);
   await pipeline(nodeStream, createWriteStream(dest));
 
-  return NextResponse.json({ ok: true, url: `/api/media/${projectId}/${name}` });
+  return NextResponse.json({ ok: true, url: `/api/media/${projectId}/${into === "assets" ? "assets/" : ""}${name}` });
 }

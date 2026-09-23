@@ -3,8 +3,9 @@ import { requeue } from "@/lib/rerun";
 import { askLLMSafe } from "@/lib/llm-relay";
 import fs from "node:fs";
 import path from "node:path";
-import { projectAssets, projectMediaDir } from "@/lib/media";
+import { MEDIA_DIR, projectAssets, projectMediaDir } from "@/lib/media";
 import { imageRequest, sceneKey } from "@/shots/image-style.mjs";
+import { findText, pageDigest } from "@/shots/page.mjs";
 import { TEMPLATES, TPL, type Field, type Shot } from "@/lib/shot-catalog";
 export { TEMPLATES, TPL, type Field, type Shot };
 
@@ -79,6 +80,23 @@ async function scriptOf(projectId: string) {
 
 function assetNamesOf(projectId: string) {
   return projectAssets(projectId).map((a) => a.name);
+}
+
+type PageDoc = { name: string; cssH: number; viewportH: number; sections?: { title: string; y: number }[]; leaves: unknown[] };
+
+/** 这个项目能用的产品页(录好的页面):名字 → 页面数据 */
+export function projectPages(projectId: string) {
+  const out = new Map<string, PageDoc>();
+  for (const a of projectAssets(projectId)) {
+    if (a.kind !== "page" || !a.file) continue;
+    try {
+      const doc = JSON.parse(fs.readFileSync(path.join(MEDIA_DIR, a.global ? "_global" : projectId, "assets", a.file), "utf8")) as PageDoc;
+      out.set(a.name, doc);
+    } catch {
+      /* 坏文件跳过 */
+    }
+  }
+  return out;
 }
 
 // ── 画面镜头的图:她在网页上加的/改了描述的,保存时在服务端直接生成(一张约 7 秒) ────────
@@ -182,7 +200,12 @@ export async function suggestShots(projectId: string, beat: string, index: numbe
   const fArt = footage?.artifacts ? JSON.parse(footage.artifacts) : {};
   const cur: Shot[] = c.shots ?? fArt.cards?.find((x: { name: string }) => x.name === beat)?.shots ?? [];
   const target = cur[index];
-  const catalogText = TEMPLATES.filter((t) => SCENE_ON || t.id !== "scene").map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).filter(Boolean).join(";")}`).join("\n");
+  const pages = projectPages(projectId);
+  const catalogText =
+    TEMPLATES.filter((t) => (SCENE_ON || t.id !== "scene") && (pages.size || t.id !== "page")).map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).filter(Boolean).join(";")}`).join("\n") +
+    (pages.size
+      ? `\n\n产品页(page 模板的 page 只能写这些名字;focus 只能从页面上的字里原样抄):\n${[...pages].map(([n, d]) => `- "${n}":\n${pageDigest(d, 1600)}`).join("\n")}`
+      : "");
   const llm = await askLLMSafe([
         {
           role: "system",
@@ -204,7 +227,15 @@ ${catalogText}`,
   const m = text.match(/\{[\s\S]*\}/);
   let options: Shot[] = [];
   try {
-    options = normalizeShots(JSON.parse(m ? m[0] : "{}").options, []).map((s) => ({ ...s, from: target?.from ?? "" }));
+    options = normalizeShots(JSON.parse(m ? m[0] : "{}").options, [])
+      .map((s) => ({ ...s, from: target?.from ?? "" }))
+      // 产品页候选:页面得真有、focus 得是页面上的原文,不然推近推到空处
+      .filter((s) => {
+        if (s.tpl !== "page") return true;
+        const d = pages.get(String(s.p?.page ?? ""));
+        const focus = Array.isArray(s.p?.focus) ? (s.p.focus as string[]) : [];
+        return !!d && focus.length > 0 && focus.every((q) => findText(d, q)?.whole);
+      });
   } catch {
     return { ok: false as const, error: "LLM 返回的不是合法 JSON,再点一次" };
   }

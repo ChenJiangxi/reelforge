@@ -22,6 +22,10 @@ const S: State = (g.__rfLLM ??= { jobs: new Map(), waiters: new Set() });
 function wake() {
   for (const w of [...S.waiters]) w();
 }
+/** 别的队列(worker-tasks)有新活时也叫醒渲染机的长轮询 */
+export function wakeWaiters() {
+  wake();
+}
 
 /** 问一次本机 Claude;fast = sonnet(聊天框这类要快的),deep = opus */
 export function askLLM(messages: Msg[], { tier = "fast", timeoutMs = 120_000 }: { tier?: "fast" | "deep"; timeoutMs?: number } = {}): Promise<string> {

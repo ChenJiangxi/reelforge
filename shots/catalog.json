@@ -2,6 +2,56 @@
   "_": "镜头模板目录。规划提示词(worker/prompts.mjs)和网页上的镜头编辑器都读这份。改字段要同时改 shots/tpl 里的组件。",
   "templates": [
     {
+      "id": "page",
+      "label": "产品页",
+      "use": "讲到产品功能、报告里的具体内容时用(最优先):真实产品页放在手机里,念到哪段就滚到哪段、推近到读得清、在那几个字下面划金线、光标点一下。focus 必须是那张产品页上真有的字(从产品页文字清单里原样抄),按念到的顺序排",
+      "cues": "focus",
+      "fields": [
+        {
+          "key": "page",
+          "label": "哪张产品页",
+          "type": "text",
+          "max": 40
+        },
+        {
+          "key": "focus",
+          "label": "要推近划线的字(页面上的原文,按念到的顺序)",
+          "type": "list",
+          "min": 1,
+          "max": 3,
+          "itemMax": 20
+        },
+        {
+          "key": "mode",
+          "label": "样式",
+          "type": "select",
+          "options": [
+            "phone",
+            "page"
+          ],
+          "labels": {
+            "phone": "手机里(光标敲黑板)",
+            "page": "铺满画面"
+          },
+          "optional": true
+        },
+        {
+          "key": "__page",
+          "label": "页面数据",
+          "type": "hidden",
+          "optional": true
+        }
+      ],
+      "example": {
+        "page": "遇见正缘报告",
+        "focus": [
+          "清冷理性的伴侣",
+          "2029"
+        ],
+        "mode": "phone"
+      }
+    },
+    {
       "id": "scene",
       "label": "画面",
       "use": "讲情绪、场景、人物状态、比喻、命理意象的地方用它:按 prompt 生成一张画面铺满全屏,镜头缓慢运动,上面最多压一句关键词。片子不能全是字 —— 全片三到五成镜头应该是画面。画面里有主角时 who 写 main(全片同一个人)",

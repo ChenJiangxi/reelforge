@@ -8,6 +8,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { shotCountFor, spokenLen, cleanText, CHARS_PER_SEC } from "../shots/timing.mjs";
 import { TASTE, playbook } from "./prompts.mjs";
+import { pageDigest, pageShotIssues } from "./pages.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const CATALOG = JSON.parse(readFileSync(join(HERE, "..", "shots", "catalog.json"), "utf8")).templates;
@@ -33,8 +34,9 @@ function fieldDoc(f) {
   return `"${f.key}"`;
 }
 
-export function catalogText() {
-  return CATALOG.filter((t) => SCENE_ON || t.id !== "scene").map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).filter(Boolean).join(";")}\n   例:${JSON.stringify(t.example)}`).join("\n");
+/** hasPages:素材库里有没有录好的产品页 —— 没有就不把「产品页」模板给 LLM 看 */
+export function catalogText({ hasPages = false } = {}) {
+  return CATALOG.filter((t) => (SCENE_ON || t.id !== "scene") && (hasPages || t.id !== "page")).map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).filter(Boolean).join(";")}\n   例:${JSON.stringify(t.example)}`).join("\n");
 }
 
 /** 这拍大概念多久(秒) */
@@ -128,6 +130,8 @@ export function shotIssues(s, at, text, source) {
     if (/口播者|主持人|直视镜头|对着镜头说/.test(pr)) out.push(`${at} 画的是口播者对着镜头说话 —— 这条片没有真人出镜,换成这句话讲的场景或意象`);
     if (/下一秒|然后|接着|随后|切到|画面一转|前后对比|左边.*右边|上半.*下半/.test(pr)) out.push(`${at} 的 prompt 写了两个瞬间 —— 一张图只能画一个瞬间(不然会生成拼接的两格),要对比就拆成两个 scene`);
   }
+  // 产品页镜头上的字是产品自己的(页面上的原文),不查照抄台词、网址;页面和 focus 在 validatePlan 里对着页面查
+  if (s.tpl === "page") return out;
   if (s.tpl === "diagram" && Array.isArray(s.p.links) && Array.isArray(s.p.nodes) && s.p.links.length > Math.max(0, s.p.nodes.length - 1)) out.push(`${at} 的 links 要比 nodes 少一个`);
   if (s.tpl === "table" && Array.isArray(s.p.rows) && Array.isArray(s.p.cols)) {
     const bad = s.p.rows.findIndex((r) => Array.isArray(r) && r.length !== s.p.cols.length);
@@ -155,7 +159,10 @@ function bigrams(s) {
   return out;
 }
 
-export function validatePlan(want, fixedByName, source, assetNames = [], allOrder = null, fixedText = null, castKnown = false) {
+/** 产品画面(素材录屏/图、产品页镜头)在"相邻不许同模板""单模板不许扎堆"里不算模板:连着几个产品画面是正常的 */
+const isProduct = (s) => !!s?.asset || s?.tpl === "page";
+
+export function validatePlan(want, fixedByName, source, assetNames = [], allOrder = null, fixedText = null, castKnown = false, pages = new Map()) {
   const order = want.map((w) => w.name);
   return (obj) => {
     const out = [];
@@ -184,6 +191,7 @@ export function validatePlan(want, fixedByName, source, assetNames = [], allOrde
         const at = `${w.name} 第 ${k + 1} 个镜头`;
         out.push(...shotIssues(s, at, w.text, source));
         if (s?.asset && !assetNames.includes(s.asset)) out.push(`${at} 的素材「${s.asset}」不在素材库里`);
+        if (s?.tpl === "page") out.push(...pageShotIssues(s, at, pages));
         if (k > 0) {
           const from = String(s?.from ?? "");
           const i = from ? cleanText(w.text).indexOf(cleanText(from)) : -1;
@@ -202,7 +210,7 @@ export function validatePlan(want, fixedByName, source, assetNames = [], allOrde
       const idx = names0.indexOf(w.name);
       const own = bigrams(w.text);
       for (const [k, s] of (b?.shots || []).entries()) {
-        if (!s?.tpl || !s.p) continue;
+        if (!s?.tpl || !s.p || s.tpl === "page") continue;
         const mine = bigrams(JSON.stringify({ ...s.p, prompt: undefined, src: undefined }));
         const score = (set) => [...mine].filter((g) => set.has(g)).length;
         const o = score(own);
@@ -218,7 +226,7 @@ export function validatePlan(want, fixedByName, source, assetNames = [], allOrde
     const names = allOrder || [...new Set([...order, ...fixedByName.keys()])];
     for (const n of names) {
       const shots = byName.get(n)?.shots || fixedByName.get(n) || [];
-      for (const s of shots) seq.push({ beat: n, tpl: s?.asset ? "asset" : s?.tpl, fixed: !byName.has(n) });
+      for (const s of shots) seq.push({ beat: n, tpl: isProduct(s) ? "asset" : s?.tpl, fixed: !byName.has(n) });
     }
     for (let i = 1; i < seq.length; i++) {
       if (seq[i].tpl === seq[i - 1].tpl && seq[i].tpl !== "asset" && !(seq[i].fixed && seq[i - 1].fixed)) out.push(`${seq[i - 1].beat} 和 ${seq[i].beat} 交界处连着两个 ${seq[i].tpl} —— 相邻镜头换个模板`);
@@ -262,7 +270,7 @@ export function normalizeShots(shots) {
 
 /** 决定清单里一拍的镜头写成一行:「砸字 → 左右对照(念到"女命看"切) → …」 */
 export function describeShots(shots) {
-  return shots.map((s, k) => `${s.asset ? `录屏「${brief(s.asset, 10)}」` : TPL_LABEL[s.tpl] ?? s.tpl}${k && s.from ? `(念到「${brief(s.from, 6)}」切)` : ""}`).join(" → ");
+  return shots.map((s, k) => `${s.asset ? `录屏「${brief(s.asset, 10)}」` : s.tpl === "page" ? `产品页「${brief(s.p?.page, 8)}」${s.p?.focus?.length ? `推近 ${s.p.focus.map((x) => brief(x, 6)).join("、")}` : ""}` : TPL_LABEL[s.tpl] ?? s.tpl}${k && s.from ? `(念到「${brief(s.from, 6)}」切)` : ""}`).join(" → ");
 }
 
 // ── 提示词 ───────────────────────────────────────────────────────────
@@ -271,11 +279,21 @@ export function describeShots(shots) {
  * 整片一次规划(看得到全片才管得住"别扎堆")。
  * want: 要规划的拍 [{name, beat, text, visual}];fixed: 不用规划的拍 [{name, text, shots}](沿用的/她改过的)
  */
-export function planPrompt(item, want, fixed, { assets = [], material = "", note = "", theme = null } = {}) {
+export function planPrompt(item, want, fixed, { assets = [], material = "", note = "", theme = null, pages = new Map() } = {}) {
   const vids = assets.filter((a) => a.kind === "video" || a.kind === "image");
-  const assetBlock = vids.length
-    ? `\n\n素材库(真录屏/真截图,能用就用 —— 讲到产品功能时,真素材永远比动画卡有说服力):\n${vids.map((a) => `- "${a.name}"(${a.kind === "video" ? "录屏" : "图片"}${a.global ? ",共享" : ""}${a.tone ? `,${a.tone === "dark" ? "深色画面" : "浅色画面"}` : ""})`).join("\n")}\n用法:镜头写成 {"asset": "文件名", "from": "切点"}。讲到产品、功能、报告内容的地方都用素材镜头 —— 有产品录屏的片子,真产品画面要占全片一半以上(她的规矩:「产品画面至少一半」「不是全部用 html」);别把素材放在不相关的拍上。`
+  // 产品页:把页面上的字按分区给它看,focus 只能从这里抄(ops-bilibili 的手机敲黑板:念到哪段,推近哪段、划线、点一下)
+  const pageBlock = pages.size
+    ? `\n\n产品页(真实产品页面,已经录好;用 tpl "page" 放在手机里滚动、推近、划金线、光标点击):\n${[...pages.values()]
+        .map((pg) => `- "${pg.asset.name}"(整页 ${Math.round(pg.doc.cssH / pg.doc.viewportH)} 屏长)页面上的字,按分区:\n${pageDigest(pg.doc)}`)
+        .join("\n")}\n用法:{"tpl": "page", "from": "切点", "p": {"page": "产品页名字", "focus": ["页面上的原文", "…"], "mode": "phone"}}。
+  - 讲到产品、报告里的具体结论、分数、画像、时间的地方,优先用产品页镜头 —— 这是真产品画面,比任何动画卡都有说服力;全片产品画面(产品页镜头 + 素材镜头)至少占一半时长(她的规矩「产品画面至少一半」)。
+  - focus 1-3 个,每个是页面上某一段字的原文(可以只抄一段里连续的几个字,≤20 字),按念到的顺序排;念到哪个词,就推近到页面上写着这个词的地方。挑和这句台词说的是同一件事的那段字;页面上的字和台词里的词重合越多越好(画面推近的时刻是按台词里念到这几个字来对的)。
+  - 相邻两个产品页镜头 focus 别在同一个位置(不然画面不动);同一张页面可以在不同拍里反复用,念到哪段推哪段。
+  - 片头第一个镜头不要用产品页(先用钩子镜头抓人),第二个镜头起可以用。`
     : "";
+  const assetBlock = pageBlock + (vids.length
+    ? `\n\n素材库(真录屏/真截图,能用就用 —— 讲到产品功能时,真素材永远比动画卡有说服力):\n${vids.map((a) => `- "${a.name}"(${a.kind === "video" ? "录屏" : "图片"}${a.global ? ",共享" : ""}${a.tone ? `,${a.tone === "dark" ? "深色画面" : "浅色画面"}` : ""})`).join("\n")}\n用法:镜头写成 {"asset": "文件名", "from": "切点"}。讲到产品、功能、报告内容的地方都用素材镜头 —— 有产品录屏的片子,真产品画面要占全片一半以上(她的规矩:「产品画面至少一半」「不是全部用 html」);别把素材放在不相关的拍上。`
+    : "");
   const sceneRule = SCENE_ON
     ? `7. 片子不能全是字:全片三到五成的镜头用 scene(画面)。讲情绪、场景、人物状态("谈恋爱总踩坑""上来特别上头""深夜一个人刷手机")、比喻("红线""窗口")、命理意象(星盘、日柱、五行流转)时用 scene;讲结构、关系、对照、数字时才用图表类模板。
    scene 的 prompt 写"画什么":谁、在哪、在做什么、什么光线、什么情绪,越具体越好(例:"一对二十多岁的中国情侣在咖啡馆背对背生闷气,女生抱着手臂看向窗外,男生低头刷手机,暖色逆光");
@@ -303,7 +321,7 @@ export function planPrompt(item, want, fixed, { assets = [], material = "", note
 ${TASTE}
 
 模板库(tpl 只能从这里选):
-${catalogText()}
+${catalogText({ hasPages: pages.size > 0 })}
 
 硬规矩:
 1. 切点 from:每拍第一个镜头不写 from;后面每个镜头的 from 必须从这拍台词里一字不差地抄 3-8 个字,念到这几个字就切过来,按台词顺序往后排。
