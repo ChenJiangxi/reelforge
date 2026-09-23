@@ -591,7 +591,7 @@ function VoiceTakes({
       })}
       {stage.status === "awaiting_review" && (
         <p className="text-center text-xs text-muted-foreground">
-          两版都不对就用下面的「打回」,直接说"第3拍太平""开头再快点"
+          两版都不对就用下面的「打回」,直接说「第3拍太平」「开头再快点」
         </p>
       )}
     </div>

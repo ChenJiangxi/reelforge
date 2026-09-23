@@ -21,22 +21,31 @@ export function PlaybookEditor({
   const [text, setText] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
 
   useEffect(() => {
     fetch(`/api/playbooks/${name}`)
       .then((r) => r.json())
-      .then((d) => setText(d.text ?? ""));
+      .then((d) => setText(d.text ?? ""))
+      .catch(() => setErr("教案没加载出来,刷新一下"));
   }, [name]);
 
   async function save() {
     if (text == null || busy) return;
     setBusy(true);
-    await fetch(`/api/playbooks/${name}`, {
+    setErr("");
+    const r = await fetch(`/api/playbooks/${name}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),
-    });
+    }).catch(() => null);
     setBusy(false);
+    // 以前不看返回值,保存失败也显示"已保存 ✓",她以为教案改好了,下一条片还是按旧的做
+    if (!r?.ok) {
+      const d = r ? await r.json().catch(() => ({})) : {};
+      setErr(`没保存上:${d.error ?? (r ? `服务器返回 ${r.status}` : "网络断了")}`);
+      return;
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
     router.refresh();
@@ -57,6 +66,7 @@ export function PlaybookEditor({
           >
             {busy ? "保存中…" : saved ? "已保存 ✓" : "保存"}
           </button>
+          {err && <span className="ml-2 text-xs text-destructive">{err}</span>}
         </div>
         {text == null ? (
           <div className="rounded-lg bg-muted/50 p-8 text-center text-sm text-muted-foreground">载入中…</div>

@@ -7,7 +7,7 @@
 // Required env: BOARD_URL, WORKER_TOKEN, OPENROUTER_API_KEY, MINIMAX_API_KEY
 // Run via: secret exec OPENROUTER_API_KEY_REELFORGE MINIMAX_API_KEY -- \
 //   env OPENROUTER_API_KEY=$OPENROUTER_API_KEY_REELFORGE node worker/index.mjs
-import { poll, claim, submit, resetWorking } from "./board.mjs";
+import { poll, claim, submit, resetWorking, stageStatus } from "./board.mjs";
 import { STAGES, WORK_ROOT } from "./stages.mjs";
 import { freeGB } from "./ffmpeg.mjs";
 import { loadPlaybooks } from "./prompts.mjs";
@@ -17,7 +17,7 @@ const MAX_CONC = Number(process.env.MAX_CONC || 1);
 const STAGE_TIMEOUT_MS = Number(process.env.STAGE_TIMEOUT_MS || 45 * 60 * 1000);
 const PLAYBOOK_REFRESH_MS = 60000;
 
-const inflight = new Map(); // stageId -> startedAt
+const inflight = new Map(); // stageId -> item(正在做的那一份,取消靠给它设 cancelled)
 
 // 开工前的磁盘水位(GB):剪辑/字幕要写十几段中间视频,留足;其余阶段小。
 // 不够就不开工,直接告诉她是磁盘 —— 以前是渲到一半 ENOSPC,报一串看不懂的 ffmpeg 错。
@@ -31,11 +31,39 @@ function log(msg) {
   console.log(line);
 }
 
-function withTimeout(promise, ms, label) {
+// 超时只是不再等它 —— 以前被放弃的那份还会在后台接着跑完、接着上传,覆盖掉之后重做的文件。
+// 现在同时给 item 设 cancelled,它在下一步开始前(stages.mjs 的 mark)自己停下。
+function withTimeout(promise, ms, label, item) {
+  let timer;
   return Promise.race([
     promise,
-    new Promise((_, rej) => setTimeout(() => rej(new Error(`timeout after ${ms / 60000}min (${label})`)), ms)),
-  ]);
+    new Promise((_, rej) => {
+      timer = setTimeout(() => {
+        item.cancelled = "timeout";
+        rej(new Error(`timeout after ${ms / 60000}min (${label})`));
+      }, ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+// 她在 worker 做到一半时改了需求(打回、改参数、改稿)→ 服务端把阶段重新排队。
+// 以前 worker 照样做完、传完,提交时才发现作废 —— 剪辑一版要好几分钟白等。
+// 现在每轮看一眼手上阶段的状态,不是 working 了就让它在下一步停下,马上按新需求重来。
+async function checkCancelled() {
+  if (!inflight.size) return;
+  let st;
+  try {
+    st = await stageStatus([...inflight.keys()]);
+  } catch {
+    return; // 老服务端没有这个接口,或者网络抖动:照旧做完,由提交时的守卫作废
+  }
+  for (const [id, item] of inflight) {
+    const s = st?.[id];
+    if (s && s !== "working" && !item.cancelled) {
+      item.cancelled = "requeued";
+      log(`STOP  "${item.title}" /${item.kind}: 阶段被重新排队(${s}),做完这一步就停`);
+    }
+  }
 }
 
 async function runItem(item) {
@@ -51,10 +79,11 @@ async function runItem(item) {
   }
   // 每一步开始前 stages.mjs 会写 item.progress = { beat, step },失败/超时时据此说清卡在哪
   item.progress = {};
-  return withTimeout(handler(item), STAGE_TIMEOUT_MS, item.kind);
+  return withTimeout(handler(item), STAGE_TIMEOUT_MS, item.kind, item);
 }
 
 async function tick() {
+  await checkCancelled();
   if (inflight.size >= MAX_CONC) return;
   let items;
   try {
@@ -77,7 +106,7 @@ async function tick() {
       if (!(item.artifacts?.failure?.kind === "disk" && free >= need)) continue;
       log(`RESUME "${item.title}" /${item.kind}: 磁盘现在有 ${free.toFixed(1)} GB,接着做`);
     } else if (free < need) {
-      inflight.set(item.stageId, Date.now());
+      inflight.set(item.stageId, item);
       try {
         await claim(item.stageId);
         const message = `渲染机磁盘只剩 ${free.toFixed(1)} GB,「${LABEL[item.kind] ?? item.kind}」开工至少要 ${need} GB,没开工`;
@@ -94,7 +123,7 @@ async function tick() {
       continue;
     }
 
-    inflight.set(item.stageId, Date.now());
+    inflight.set(item.stageId, item);
     (async () => {
       try {
         await claim(item.stageId);
@@ -103,6 +132,11 @@ async function tick() {
         await submit(item.stageId, "awaiting_review", artifacts);
         log(`DONE  "${item.title}" /${item.kind} -> awaiting_review`);
       } catch (e) {
+        if (e?.cancelled === "requeued" || item.cancelled === "requeued") {
+          // 阶段已经是 pending/changes_requested 了,不用提交;下一轮就会按新需求重新认领
+          log(`CANCEL "${item.title}" /${item.kind}: 需求改了,这版作废,马上重来`);
+          return;
+        }
         const p = item.progress || {};
         const where = [p.beat, p.step].filter(Boolean).join(" · ");
         const message = String(e?.message || e).slice(0, 400);

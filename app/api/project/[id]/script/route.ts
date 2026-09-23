@@ -26,8 +26,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // Re-segment her text into beats. The text is law — LLM must not rewrite it.
   const key = process.env.OPENROUTER_API_KEY;
   let clips;
-  if (key) {
+  if (key) try {
     const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      signal: AbortSignal.timeout(90_000),
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
       body: JSON.stringify({
@@ -61,7 +62,13 @@ ${text}`,
     const j = await r.json().catch(() => ({}));
     const raw = j.choices?.[0]?.message?.content ?? "";
     const m = raw.match(/\{[\s\S]*\}/);
-    clips = m ? JSON.parse(m[0]).clips : null;
+    try {
+      clips = m ? JSON.parse(m[0]).clips : null;
+    } catch {
+      clips = null; // LLM 回了坏 JSON:走下面的整段一拍兜底,别让她亲手改的稿子存不上
+    }
+  } catch {
+    clips = null; // 超时 / 网络错:同上
   }
   // LLM 挂了也能存:整段当一拍,人工兜底
   const segFailed = !Array.isArray(clips) || !clips.length;

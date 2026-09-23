@@ -65,9 +65,12 @@ export async function runDelivery(projectId: string): Promise<string> {
     archive.finalize();
   });
 
+  // 只有全部阶段都通过才算"已交付"。以前下载接口在包不存在时会调到这里,
+  // 她提前点一下下载,项目就被标成已交付了(阶段其实还在待审)。
+  const allApproved = project.stages.every((s) => s.status === "approved");
   await prisma.project.update({
     where: { id: projectId },
-    data: { status: "delivered", packagePath: zipPath },
+    data: allApproved ? { status: "delivered", packagePath: zipPath } : { packagePath: zipPath },
   });
   // 包里缺东西必须说出来,不能只在 zip 里塞一个 MISSING.txt
   const missing = [

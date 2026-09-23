@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { uploadFiles } from "@/lib/upload-client";
 
 type Asset = { name: string; url: string; kind: string; size: number };
 
@@ -13,19 +14,17 @@ export function AssetLibrary({ assets }: { assets: Asset[] }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
 
   async function upload(files: FileList | null) {
     if (!files?.length || busy) return;
     setBusy(true);
-    const form = new FormData();
-    for (const f of files) form.append("files", f);
-    try {
-      await fetch("/api/assets", { method: "POST", body: form });
-      router.refresh();
-    } finally {
-      setBusy(false);
-      if (inputRef.current) inputRef.current.value = "";
-    }
+    setErr("");
+    const msg = await uploadFiles("/api/assets", files);
+    if (msg) setErr(msg);
+    setBusy(false);
+    if (inputRef.current) inputRef.current.value = "";
+    router.refresh();
   }
 
   return (
@@ -46,6 +45,7 @@ export function AssetLibrary({ assets }: { assets: Asset[] }) {
         >
           {busy ? "上传中…" : "+ 上传素材"}
         </button>
+        {err && <span className="ml-3 text-xs text-destructive">{err}</span>}
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">

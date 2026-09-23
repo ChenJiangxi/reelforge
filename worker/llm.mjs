@@ -38,26 +38,51 @@ export async function chat(messages, { model = MODEL, temperature = 0.7, maxToke
 }
 
 // Ask for a JSON object back; tolerate code fences / surrounding prose.
-export async function chatJSON(messages, opts = {}) {
-  const text = await chat(messages, opts);
+// 实见的污染:数字被包进字母/竖线(`"speed": II0.95II`)、尾逗号、中文引号当 JSON 的引号用
+// (`"visual": “你有贵人”四个字`)。先按规则修;修不好就让它重答一次 —— 整个阶段因为一个脏字符
+// FAILED 停在那儿,比多调一次贵得多。
+function repairJSON(raw) {
+  return raw
+    .replace(/:\s*[A-Za-z|]{1,3}(-?\d+(?:\.\d+)?)[A-Za-z|]{1,3}\s*(?=[,}\]])/g, ": $1")
+    .replace(/,\s*(?=[}\]])/g, "")
+    // 中文引号只在"当分隔符用"的位置换成英文引号;字符串内容里的中文引号是合法字符,不能动
+    .replace(/([{,[]\s*)[\u201c\u201d]/g, '$1"') // 键的开头 / 数组元素开头
+    .replace(/[\u201c\u201d](\s*:)/g, '"$1') // 键的结尾
+    .replace(/(:\s*)[\u201c\u201d]/g, '$1"') // 值的开头
+    .replace(/[\u201c\u201d](\s*[,}\]])/g, '"$1'); // 值的结尾
+}
+
+function parseLoose(text) {
   const m = text.match(/\{[\s\S]*\}/);
   if (!m) throw new Error(`no JSON in LLM reply: ${text.slice(0, 200)}`);
   try {
     return JSON.parse(m[0]);
   } catch (e) {
-    // 实见的污染:数字被包进字母/竖线(`"speed": II0.95II`)、尾逗号、中文引号。
-    // 整个阶段因为一个脏字符 FAILED 停在那儿,比修一次贵得多。
-    const fixed = m[0]
-      .replace(/:\s*[A-Za-z|]{1,3}(-?\d+(?:\.\d+)?)[A-Za-z|]{1,3}\s*(?=[,}\]])/g, ": $1")
-      .replace(/,\s*(?=[}\]])/g, "")
-      .replace(/[""]/g, '"');
     try {
-      const out = JSON.parse(fixed);
+      const out = JSON.parse(repairJSON(m[0]));
       console.log("[llm] JSON 有脏字符,已修复后解析");
       return out;
     } catch {
       throw new Error(`bad JSON from LLM: ${e.message}. head=${m[0].slice(0, 160)}`);
     }
+  }
+}
+
+export async function chatJSON(messages, opts = {}) {
+  const text = await chat(messages, opts);
+  try {
+    return parseLoose(text);
+  } catch (e) {
+    console.log(`[llm] ${String(e.message).slice(0, 100)} → 让它重答一次`);
+    const again = await chat(
+      [
+        ...messages,
+        { role: "assistant", content: text.slice(0, 6000) },
+        { role: "user", content: "上面这段不是合法 JSON(常见原因:用了中文引号“”当 JSON 的引号、字符串里有没转义的英文双引号、尾逗号)。内容不变,只返回修正后的合法 JSON,不要任何解释。" },
+      ],
+      { ...opts, temperature: 0.2 },
+    );
+    return parseLoose(again);
   }
 }
 

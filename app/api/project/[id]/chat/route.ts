@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readdirSync } from "fs";
-import path from "path";
 import { prisma } from "@/lib/db";
 import { parseChat, applyOps, type Clip, type ChatOp } from "@/lib/chat-ops";
 import { resolveStage } from "@/lib/resolve-stage";
@@ -8,19 +6,7 @@ import { requeue } from "@/lib/rerun";
 import { applyOverrides } from "@/lib/overrides";
 import { parseDirect, type BeatKind } from "@/lib/direct-edit";
 import { STAGE_ORDER, stageLabel, type Decision, type Overrides } from "@/lib/stages";
-import { MEDIA_DIR } from "@/lib/media";
-
-function projectAssets(projectId: string): { name: string; kind: string }[] {
-  const read = (id: string) => {
-    const dir = path.join(MEDIA_DIR, id, "assets");
-    let files: string[] = [];
-    try { files = readdirSync(dir); } catch { return []; }
-    return files
-      .filter((f) => /\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)$/i.test(f))
-      .map((f) => ({ name: f, kind: /\.(mp4|mov|webm|m4v)$/i.test(f) ? "video" : "image" }));
-  };
-  return [...read(projectId), ...read("_global")];
-}
+import { projectAssets } from "@/lib/media";
 
 // LLM 给的阶段名只用来"预填"重做表单,不再直接执行 —— 她在表单上看得见要重做的是哪一步,
 // 点了才算。2026-09-16「素材重出」被判成了配音,错在她刚要求过别动的那件事上。

@@ -17,7 +17,14 @@ const GAP = 0.18; // 两拍之间的留白(秒)。原来 0.25,叠上 TTS 自带�
 // 她只能看完成片往回猜。
 
 // 标记当前在做哪一拍、哪一步 —— 失败或超时时 index.mjs 靠它说清卡在哪
+// 也是取消点:她改了需求(阶段被重新排队)或者超时了,index.mjs 会设 item.cancelled,
+// 下一步开始前就停 —— 不再把一整版按旧需求做完、传完再作废,也不会超时后在后台接着覆盖文件。
 function mark(item, beat, step) {
+  if (item.cancelled) {
+    const e = new Error(item.cancelled === "timeout" ? "超时了,停在这一步" : "需求改了,这一版作废");
+    e.cancelled = item.cancelled;
+    throw e;
+  }
   if (!item.progress) return;
   item.progress.beat = beat || undefined;
   item.progress.step = step || undefined;
@@ -248,26 +255,25 @@ async function topic(item) {
   ];
   if (banned) decisions.push({ topic: "用词", choice: "有绝对化用词", why: "最/彻底/史上/百分百/绝对 —— 平台容易判违规", warn: true });
   if (item.reviewNote) decisions.push({ topic: "批注", choice: "按你的打回批注重写", why: item.reviewNote.slice(0, 80) });
-  return { note: note + warnLine, topic: out, decisions };
+  const material = item.artifacts?.material;
+  if (material) decisions.push({ topic: "参考材料", choice: `${[...material].length} 字`, why: "新建项目时贴的资料,选题和脚本都基于它写" });
+  // 参考材料跟着选题往下传:脚本阶段只看得到上游的产物
+  return { note: note + warnLine, topic: material ? { ...out, material } : out, decisions };
 }
 
-async function script(item) {
-  const t = item.upstream?.topic?.topic;
-  if (!t) throw new Error("上游选题没有结构化数据(topic.topic 缺失)");
-  // Two passes: draft the coherent narration, then a chief-editor critique.
-  // Learned from MuseDock: narration is one flowing piece (hook→landing),
-  // segmented into beats of 1-3 sentences — never a list of one-liners.
-  mark(item, null, "写初稿");
-  const draft = await chatJSON(guided(item, PROMPTS.script(item, t)), { temperature: 0.75, maxTokens: 6000 });
-  mark(item, null, "主编审稿");
-  const out = await chatJSON(PROMPTS.scriptCritique(item, draft), { temperature: 0.5, maxTokens: 6000 });
-  if (!Array.isArray(out.clips) || out.clips.length < 3) throw new Error("脚本 clips 太少或格式错误");
-  out.clips.forEach((c, i) => { c.name = `c${String(i + 1).padStart(2, "0")}`; });
-  // 停顿标记只该出现在 tts 里:漏进 text 会被念进字幕,tts 改了字就不是她的稿子了。
-  // 舞台提示同理 —— LLM 爱写"(停顿)""(轻笑)"进台词,TTS 会把这三个字念出来。
+// 中文口播实测 4.5-4.7 字/秒(含句间留白,不算标点)—— 两条线上片子量出来的。
+// 以前脚本阶段只在提示词里说一句"约 N 字",LLM 写多了没人管:「遇见正缘」目标 90s,
+// 写了 630 字,成片 135s。现在超预算 15% 就让它压,压两轮还超就标黄。
+const CHARS_PER_SEC = 4.6;
+export const spokenLen = (s) => [...String(s ?? "").replace(/[\p{P}\p{S}\s]/gu, "")].length;
+
+// 停顿标记只该出现在 tts 里:漏进 text 会被念进字幕,tts 改了字就不是她的稿子了。
+// 舞台提示同理 —— LLM 爱写"(停顿)""(轻笑)"进台词,TTS 会把这三个字念出来。
+function tidyClips(clips) {
   const stripped = [];
   const ttsDropped = [];
-  for (const c of out.clips) {
+  clips.forEach((c, i) => { c.name = `c${String(i + 1).padStart(2, "0")}`; });
+  for (const c of clips) {
     const raw = String(c.text ?? "").replace(/<#[\d.]+#>/g, "").trim();
     c.text = stripStageDirections(raw);
     if (c.text !== raw) stripped.push(c.name);
@@ -276,8 +282,41 @@ async function script(item) {
       if (c.tts.replace(/<#[\d.]+#>/g, "") !== c.text) { c.tts = undefined; ttsDropped.push(c.name); }
     }
   }
-  const narration = out.narration || out.clips.map((c) => c.text).join("\n");
-  const chars = out.clips.reduce((n, c) => n + c.text.length, 0);
+  return { stripped, ttsDropped };
+}
+
+async function script(item) {
+  const t = item.upstream?.topic?.topic;
+  if (!t) throw new Error("上游选题没有结构化数据(topic.topic 缺失)");
+  // Two passes: draft the coherent narration, then a chief-editor critique.
+  // Learned from MuseDock: narration is one flowing piece (hook→landing),
+  // segmented into beats of 1-3 sentences — never a list of one-liners.
+  const budget = Math.round(item.duration * CHARS_PER_SEC);
+  mark(item, null, "写初稿");
+  const draft = await chatJSON(guided(item, PROMPTS.script(item, t, budget)), { temperature: 0.75, maxTokens: 6000 });
+  mark(item, null, "主编审稿");
+  let out = await chatJSON(PROMPTS.scriptCritique(item, draft, budget), { temperature: 0.5, maxTokens: 6000 });
+  if (!Array.isArray(out.clips) || out.clips.length < 3) throw new Error("脚本 clips 太少或格式错误");
+  let { stripped, ttsDropped } = tidyClips(out.clips);
+  const count = (o) => o.clips.reduce((n, c) => n + spokenLen(c.text), 0);
+  const draftLen = Array.isArray(draft.clips) ? count(draft) : null;
+  let n = count(out);
+  const trims = [];
+  const zh = item.voice !== "minimax-en"; // 英文稿按字数卡没意义
+  for (let pass = 1; zh && pass <= 2 && n > budget * 1.15; pass++) {
+    mark(item, null, `压字数(第 ${pass} 轮,${n} → ${budget} 字)`);
+    const cut = await chatJSON(PROMPTS.scriptTrim(item, out, budget, n), { temperature: 0.4, maxTokens: 6000 }).catch(() => null);
+    if (!Array.isArray(cut?.clips) || cut.clips.length < 3) break;
+    const tidy = tidyClips(cut.clips);
+    const m = count(cut);
+    if (m >= n) break; // 没压下来就别换
+    trims.push([n, m]);
+    out = cut;
+    ({ stripped, ttsDropped } = tidy);
+    n = m;
+  }
+  const narration = out.narration && !trims.length ? out.narration : out.clips.map((c) => c.text).join("\n");
+  const chars = n;
   const arc = out.clips.map((c) => c.beat).filter(Boolean).join("→");
   const rel = out.clips.map((c) => Number(c.say?.speed) || 1);
   const swarn = [];
@@ -285,16 +324,26 @@ async function script(item) {
   if (!out.clips.some((c) => /<#[\d.]+#>/.test(String(c.tts || "")))) swarn.push("全片没标一处停顿");
   if ((out.clips[0]?.text || "").length > 20) swarn.push(`第一句 ${out.clips[0].text.length} 字,开头太长抓不住人`);
 
-  const est = Math.round(chars / 4.5);
+  const est = Math.round(chars / CHARS_PER_SEC);
+  const over = zh && chars > budget * 1.15;
+  const under = zh && chars < budget * 0.7;
   const decisions = [
     { topic: "拍数", choice: `${Array.isArray(draft.clips) ? `初稿 ${draft.clips.length} 拍 → ` : ""}定稿 ${out.clips.length} 拍`, why: "初稿写完过了一遍主编审稿(连贯性、人味),拍数以定稿为准" },
-    { topic: "字数", choice: `${chars} 字 · 预估 ~${est}s`, why: `目标 ~${item.duration}s;按每秒 4.5 字粗估,配音出来才是准数`, warn: Math.abs(est - item.duration) / item.duration > 0.3 },
+    {
+      topic: "字数",
+      choice: `${chars} 字 · 预估 ~${est}s`,
+      why: `目标 ~${item.duration}s → 预算 ${budget} 字(不算标点,每秒 ${CHARS_PER_SEC} 字是两条线上片子实测的)${draftLen != null ? `;初稿 ${draftLen} 字` : ""}` +
+        (over ? ";压了还是超,配音会比目标长,要么打回说删哪段,要么接受这个长度" : under ? ";偏短,配音会比目标短不少" : ""),
+      warn: over || under,
+    },
+    ...trims.map(([a, b], i) => ({ topic: "压字数", choice: `第 ${i + 1} 轮 ${a} → ${b} 字`, why: "超预算 15% 以上,让 AI 删次要的例子和重复的意思,钩子和落点尽量不动" })),
     ...swarn.map((w) => ({ topic: "自检", choice: w, warn: true })),
   ];
   if (item.reviewNote) decisions.unshift({ topic: "批注", choice: "按你的打回批注重写", why: item.reviewNote.slice(0, 80) });
+  if (t.material) decisions.push({ topic: "参考材料", choice: "按你贴的资料写", why: `${[...t.material].length} 字的资料,数字和案例从这里出` });
   for (const c of out.clips) {
     const pauses = (String(c.tts || "").match(/<#[\d.]+#>/g) || []).length;
-    decisions.push({ beat: c.name, topic: "节拍", choice: `${BEAT_LABEL[c.beat] ?? c.beat ?? "未标"} · ${c.text.length} 字${pauses ? ` · 停顿 ${pauses} 处` : ""}` });
+    decisions.push({ beat: c.name, topic: "节拍", choice: `${BEAT_LABEL[c.beat] ?? c.beat ?? "未标"} · ${spokenLen(c.text)} 字${pauses ? ` · 停顿 ${pauses} 处` : ""}` });
     if (stripped.includes(c.name)) decisions.push({ beat: c.name, topic: "清理", choice: "删掉了台词里的舞台提示", why: "像「(停顿)」这种字会被 TTS 照着念出来" });
     if (ttsDropped.includes(c.name)) decisions.push({ beat: c.name, topic: "停顿", choice: "没用 AI 标的停顿版", why: "标停顿时改了字,按原台词念(这拍就没有句中停顿了)", warn: true });
   }
@@ -302,7 +351,7 @@ async function script(item) {
     script: narration,
     clips: out.clips,
     decisions,
-    note: `${out.clips.length} 拍(${arc || "无节拍标注"}),约 ${chars} 字(目标 ~${item.duration}s)。连贯性/人味已经过一遍主编审稿。
+    note: `${out.clips.length} 拍(${arc || "无节拍标注"}),约 ${chars} 字(目标 ~${item.duration}s,预算 ${budget} 字)。连贯性/人味已经过一遍主编审稿。
 念法:${out.clips.map((c) => `${c.name} ${(Number(c.say?.speed) || 1).toFixed(2)}x${c.say?.emotion ? `/${c.say.emotion}` : ""}`).join("  ")}${swarn.length ? `\n⚠ 脚本自检:${swarn.join(";")}` : ""}`,
   };
 }
@@ -369,7 +418,7 @@ async function footage(item) {
       if (!asset) throw new Error(`素材「${assetName}」不在素材库里(可能被删了),换一个或把这拍的指定去掉`);
       let posterUrl = asset.url;
       if (asset.kind === "video") {
-        if (prev && prev.asset === assetName && prev.name === clip.name && prev._img) {
+        if (prev && prev.asset === assetName && prev.assetUrl === asset.url && prev.name === clip.name && prev._img) {
           posterUrl = prev._img; // 同一拍、同一个素材:封面帧不用重截重传
         } else {
           mark(item, beat, "截素材封面帧");
@@ -387,7 +436,7 @@ async function footage(item) {
       }
       console.log(`  [footage] ${clip.name} uses asset ${assetName}`);
       images.push(posterUrl);
-      cards.push({ name: clip.name, text: clip.text, asset: assetName, visualRev: clip.visualRev });
+      cards.push({ name: clip.name, text: clip.text, asset: assetName, assetUrl: asset.url, visualRev: clip.visualRev });
       decisions.push({
         beat,
         topic: "画面",

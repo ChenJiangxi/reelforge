@@ -55,7 +55,9 @@ export async function parseChat(
 review 操作优先于一切普通操作——她在审,不是在下新需求。`
     : "【当前状态:没有待审阶段】她的话都是普通修改或闲聊。";
 
+  // 服务端调 LLM 也要有超时:挂住的连接会让她的聊天框一直转圈(worker 那边 09-13 吃过同样的亏)
   const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    signal: AbortSignal.timeout(60_000),
     method: "POST",
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
     body: JSON.stringify({

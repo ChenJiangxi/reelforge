@@ -28,7 +28,9 @@ export async function POST(req: NextRequest) {
         kind: STAGE_ORDER[order],
         order,
         status: "pending",
-        artifacts: order === 0 ? JSON.stringify({ note: `原始想法：${topic}` }) : null,
+        // 参考材料存在选题阶段的产物里:选题提示词读 item.artifacts.material,再由选题往下传给脚本。
+        // 2026-09-13 加了输入框,这里却一直没存 —— 她贴的资料十天里全被丢掉了。
+        artifacts: order === 0 ? JSON.stringify({ note: `原始想法:${topic}`, ...(material ? { material } : {}) }) : null,
       },
     });
   }

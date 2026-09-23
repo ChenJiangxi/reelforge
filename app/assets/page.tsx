@@ -1,10 +1,10 @@
-import { listGlobalAssets } from "@/app/api/assets/route";
+import { listAssets } from "@/lib/media";
 import { AssetLibrary } from "@/components/AssetLibrary";
 
 export const dynamic = "force-dynamic";
 
 export default function AssetsPage() {
-  const assets = listGlobalAssets();
+  const assets = listAssets("_global");
   return (
     <div className="max-w-5xl">
       <div className="mb-6 flex items-end justify-between">

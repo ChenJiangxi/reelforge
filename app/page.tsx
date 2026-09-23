@@ -29,7 +29,12 @@ export default async function Home() {
           const ordered = [...p.stages].sort((a, b) => a.order - b.order);
           const done = ordered.filter((s) => s.status === "approved").length;
           const total = ordered.length || 1;
+          // 失败停放的阶段要一眼看出来:以前卡片只写"当前:剪辑",看不出它其实已经挂了
+          const failed = ordered.find(
+            (s) => s.status === "changes_requested" && /"failure"|"note":"FAILED:/.test(s.artifacts ?? ""),
+          );
           const current =
+            failed ??
             ordered.find((s) => s.status === "awaiting_review") ??
             ordered.find((s) => s.status === "working") ??
             ordered.find((s) => s.status !== "approved");
@@ -56,9 +61,13 @@ export default async function Home() {
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>
                   {current ? `当前:${stageLabel(current.kind)}` : "已完成"}
-                  {current?.status === "awaiting_review" && (
+                  {failed ? (
+                    <span className="ml-1 font-medium text-destructive">· 没做成,点开看卡在哪</span>
+                  ) : current?.status === "awaiting_review" ? (
                     <span className="ml-1 font-medium text-accent">· 待你审</span>
-                  )}
+                  ) : current?.status === "working" ? (
+                    <span className="ml-1">· 制作中</span>
+                  ) : null}
                 </span>
                 <span className="font-mono tabular-nums">
                   {done}/{total}

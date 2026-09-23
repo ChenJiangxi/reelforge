@@ -110,13 +110,13 @@ export function ProjectWorkspace({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
-        <div className="order-2 min-h-0 min-w-0 lg:order-1 lg:shrink-0">
-          <div className="hidden h-full lg:block" style={{ width: chatW }}>
-            <ChatPanel projectId={projectId} messages={messages} onSuggestRedo={onSuggest} />
-          </div>
-          <div className="lg:hidden">
-            <ChatPanel projectId={projectId} messages={messages} onSuggestRedo={onSuggest} />
-          </div>
+        {/* 聊天框只挂一份:以前桌面/手机各挂一份(另一份 CSS 藏起来),两份各自维护待发消息和滚动,
+            页面里也有两个输入框。宽度改成只在桌面生效的 CSS 变量。 */}
+        <div
+          className="order-2 min-h-0 min-w-0 lg:order-1 lg:h-full lg:w-[var(--chat-w)] lg:shrink-0"
+          style={{ "--chat-w": `${chatW}px` } as React.CSSProperties}
+        >
+          <ChatPanel projectId={projectId} messages={messages} onSuggestRedo={onSuggest} />
         </div>
         {/* 拖拽分隔条(桌面端) */}
         <div

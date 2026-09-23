@@ -1,11 +1,10 @@
+import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
-import { readdirSync, statSync } from "fs";
-import path from "path";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ProjectWorkspace } from "@/components/ProjectWorkspace";
 import { AssetBar, type Asset } from "@/components/AssetBar";
-import { MEDIA_DIR } from "@/lib/media";
+import { projectAssets } from "@/lib/media";
 import type { ClipThumb, StageView } from "@/components/PreviewPane";
 import type { Artifacts, Comment } from "@/lib/stages";
 import { ASPECT_OPTIONS, voiceLabel } from "@/lib/stages";
@@ -47,20 +46,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
 
 
   // 素材库(录屏/图片),扫盘得来:项目素材 + 全局共享素材,都可拖到节拍上
-  const readAssets = (id: string): Asset[] => {
-    const dir = path.join(MEDIA_DIR, id, "assets");
-    let files: string[] = [];
-    try { files = readdirSync(dir); } catch { return []; }
-    return files
-      .filter((f) => /\.(mp4|mov|webm|m4v|png|jpe?g|webp|gif)$/i.test(f))
-      .map((f) => ({
-        name: f,
-        url: `/api/media/${id}/assets/${encodeURIComponent(f)}`,
-        kind: /\.(mp4|mov|webm|m4v)$/i.test(f) ? "video" : "image",
-        size: statSync(path.join(dir, f)).size,
-      }));
-  };
-  const assets: Asset[] = [...readAssets(project.id), ...readAssets("_global")];
+  const assets: Asset[] = projectAssets(project.id);
 
   // 每拍是什么画面(决定清单里的运镜选项按它给)+ 她挂在这拍上的剪辑参数
   const kindOf = (name: string, asset?: string): ClipThumb["kind"] => {
@@ -84,7 +70,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     <div className="project-shell max-w-[1600px]">
       {/* 头部一行:返回 + 标题 + 状态 + 设置 + 素材入口,全在一行,不占工作区 */}
       <div className="mb-1.5 flex shrink-0 items-center gap-3">
-        <a href="/" className="shrink-0 text-sm text-muted-foreground hover:text-foreground">←</a>
+        <Link href="/" className="shrink-0 text-sm text-muted-foreground hover:text-foreground">←</Link>
         <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">{project.title}</h1>
         <StatusBadge status={project.status} />
         <span className="hidden shrink-0 font-mono text-[11px] text-muted-foreground md:inline">

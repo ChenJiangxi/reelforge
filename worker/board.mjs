@@ -35,6 +35,8 @@ export const claim = (stageId) =>
 export const submit = (stageId, status, artifacts) =>
   api("/api/worker/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ stageId, status, artifacts }) });
 export const resetWorking = () => api("/api/worker/reset", { method: "POST" });
+/** { stageId: status } —— worker 用来发现手上的阶段被重新排队了 */
+export const stageStatus = (ids) => api(`/api/worker/status?ids=${ids.map(encodeURIComponent).join(",")}`, {}, 4);
 
 // Uploads go over a slow international link (tens of KB/s); use raw http with
 // a 15-minute timeout and retries — undici's fetch defaults give up mid-file.

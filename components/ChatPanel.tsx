@@ -27,13 +27,11 @@ export function ChatPanel({
 
   // Drop optimistic messages once the server copy arrives — otherwise every
   // sent message shows twice (local pending + server message).
-  useEffect(() => {
-    setPending((p) => p.filter((pm) => !messages.some((m) => m.role === pm.role && m.text === pm.text)));
-  }, [messages]);
+  const shownPending = pending.filter((pm) => !messages.some((m) => m.role === pm.role && m.text === pm.text));
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, pending.length]);
+  }, [messages.length, shownPending.length]);
 
   const sendingRef = useRef(false);
 
@@ -72,13 +70,13 @@ export function ChatPanel({
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
-        {messages.length === 0 && pending.length === 0 && (
+        {messages.length === 0 && shownPending.length === 0 && (
           <div className="rounded-lg bg-muted/60 p-3 text-[13px] leading-relaxed text-muted-foreground">
             这就是 chatcut 那个聊天框。改词、删句、调画面、换封面,直接打字;
             agent 改完会重配音、重剪,右侧预览自动更新。
           </div>
         )}
-        {[...messages, ...pending].map((m, i) => (
+        {[...messages, ...shownPending].map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
               className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${

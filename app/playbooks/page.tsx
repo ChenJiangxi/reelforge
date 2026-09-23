@@ -35,7 +35,7 @@ export default async function PlaybooksPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">教案</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          每个阶段的"做法"都在这,改完保存,worker 一分钟内拿到新版——下一条片就按新教案做。右边是这个阶段最近被打回的批注,就是教案的迭代方向。
+          每个阶段的「做法」都在这,改完保存,worker 一分钟内拿到新版——下一条片就按新教案做。右边是这个阶段最近被打回的批注,就是教案的迭代方向。
         </p>
       </div>
       <div className="space-y-6">

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { uploadFiles } from "@/lib/upload-client";
 
 export type Asset = { name: string; url: string; kind: string; size: number };
 
@@ -10,19 +11,17 @@ export function AssetBar({ projectId, assets, compact = false }: { projectId: st
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
 
   async function upload(files: FileList | null) {
     if (!files?.length || busy) return;
     setBusy(true);
-    const form = new FormData();
-    for (const f of files) form.append("files", f);
-    try {
-      await fetch(`/api/project/${projectId}/assets`, { method: "POST", body: form });
-      router.refresh();
-    } finally {
-      setBusy(false);
-      if (inputRef.current) inputRef.current.value = "";
-    }
+    setErr("");
+    const msg = await uploadFiles(`/api/project/${projectId}/assets`, files);
+    if (msg) setErr(msg);
+    setBusy(false);
+    if (inputRef.current) inputRef.current.value = "";
+    router.refresh();
   }
 
   if (compact) {
@@ -64,6 +63,11 @@ export function AssetBar({ projectId, assets, compact = false }: { projectId: st
         >
           {busy ? "上传中…" : "+ 上传"}
         </button>
+        {err && (
+          <button onClick={() => setErr("")} title="点一下关掉" className="max-w-64 truncate text-xs text-destructive">
+            {err}
+          </button>
+        )}
       </span>
     );
   }
@@ -113,6 +117,7 @@ export function AssetBar({ projectId, assets, compact = false }: { projectId: st
       >
         {busy ? "上传中…" : "+ 上传"}
       </button>
+      {err && <span className="shrink-0 text-xs text-destructive">{err}</span>}
     </div>
   );
 }

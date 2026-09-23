@@ -1,8 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { ProjectNav, type NavProject } from "@/components/ProjectNav";
+
+function subscribeSidebar(cb: () => void) {
+  window.addEventListener("rf_sidebar", cb);
+  window.addEventListener("storage", cb);
+  return () => {
+    window.removeEventListener("rf_sidebar", cb);
+    window.removeEventListener("storage", cb);
+  };
+}
 
 // App shell with a collapsible left rail (收进去 = 细条图标轨,展开回全宽)。
 // Collapsed state persists in localStorage.
@@ -15,15 +24,11 @@ export function AppShell({
   projects: NavProject[];
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
-  useEffect(() => {
-    setCollapsed(localStorage.getItem("rf_sidebar") === "1");
-  }, []);
+  // 折叠状态存在 localStorage:服务端渲染时一律展开,到了浏览器再读真实值(不闪、不报 hydration 错)
+  const collapsed = useSyncExternalStore(subscribeSidebar, () => localStorage.getItem("rf_sidebar") === "1", () => false);
   const toggle = () => {
-    setCollapsed((c) => {
-      localStorage.setItem("rf_sidebar", c ? "0" : "1");
-      return !c;
-    });
+    localStorage.setItem("rf_sidebar", collapsed ? "0" : "1");
+    window.dispatchEvent(new Event("rf_sidebar"));
   };
 
   return (

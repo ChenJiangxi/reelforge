@@ -74,7 +74,7 @@ ${item.artifacts?.material ? `\n参考材料(真实资料,内容优先从这里�
     },
   ],
 
-  script: (item, topic) => [
+  script: (item, topic, budget = Math.round(item.duration * 4.6)) => [
     {
       role: "system",
       content: `你是短视频口播编剧,同时负责标出这稿子"怎么念"。写的是一篇"能一口气念下来"的稿子,不是金句清单。
@@ -93,7 +93,8 @@ ${topic.material ? `参考材料(真实资料,数字/案例从这里出):\n${top
 要讲的判断:${(topic.claims || []).join(" / ")}
 绝不能吹:${(topic.avoid || []).join(" / ")}
 配音语言:${item.voice === "minimax-en" ? "英文(地道、有激情的旁白)" : "中文(第一人称)"}
-目标时长 ~${item.duration} 秒(中文 4.7 字/秒,总字数 = 时长×4.7 ±15%,大约 ${Math.round(item.duration * 4.7 * 0.85)}-${Math.round(item.duration * 4.7 * 1.15)} 字)。
+目标时长 ~${item.duration} 秒。中文口播实测每秒 4.6 字(不算标点),所以正文最多 ${budget} 字,写到 ${Math.round(budget * 0.85)}-${budget} 字最好。
+超了配音就会超时长——宁可少讲一个例子,不要每句都塞满。
 
 返回 JSON(不要多余文字):
 {
@@ -123,6 +124,28 @@ gap_after(0.05-0.6,转折/反转给到 0.3+,钩子给 0.08-0.15)和 tts 里的�
     },
   ],
 
+  // 稿子超预算时压字数:删次要内容,不是把每句压成电报体
+  scriptTrim: (item, script, budget, now) => [
+    {
+      role: "system",
+      content: `你是短视频口播主编。这篇稿子写长了,念出来会超过目标时长,你要把它压短。\n${TASTE}`,
+    },
+    {
+      role: "user",
+      content: `目标时长 ~${item.duration} 秒。中文口播每秒约 4.6 字(不算标点),所以正文最多 ${budget} 字;现在是 ${now} 字。
+压法:
+- 删次要的例子、重复的意思、铺垫太长的句子;太碎的拍可以合并,拍数 5-8 个为宜
+- 第一句钩子和最后一句落点尽量不动
+- 留下来的句子保持口语、完整,不许压成电报体
+- 数字、专有名词、事实一个都不许改错,也不许新编
+
+原稿(JSON):
+${JSON.stringify(script, null, 1)}
+
+返回同样结构的完整 JSON(narration + clips,每拍都带 name/beat/text/tts/say/visual_type/visual)。`,
+    },
+  ],
+
   // 给一篇已经定稿的口播补"怎么念"——一个字都不许改,只标念法。
   // 老项目(脚本里没有 say)和她打回配音说"太平/开头再快点"时都走这里。
   delivery: (item, clips) => [
@@ -147,7 +170,7 @@ speed 是相对基准音色的倍率 0.82-1.25,pitch -3~3,emotion∈happy|surpri
     },
   ],
 
-  scriptCritique: (item, draft) => [
+  scriptCritique: (item, draft, budget = Math.round(item.duration * 4.6)) => [
     {
       role: "system",
       content: `你是毒舌但专业的短视频主编。审一篇口播稿,只挑真毛病,按清单过:
@@ -166,7 +189,7 @@ speed 是相对基准音色的倍率 0.82-1.25,pitch -3~3,emotion∈happy|surpri
 ${JSON.stringify(draft, null, 1)}
 
 按清单改完,返回同样结构的完整 JSON(narration + clips,每拍都要带 text/tts/say)。没毛病的地方别动。
-目标时长 ~${item.duration} 秒(4.7 字/秒,注意 speed 会影响实际时长)。`,
+目标时长 ~${item.duration} 秒:正文(不算标点)预算 ${budget} 字。超了就删次要内容压回预算;没超就别为了改而改长短 —— 既不加废话凑字数,也别删掉有信息量的句子。`,
     },
   ],
 
