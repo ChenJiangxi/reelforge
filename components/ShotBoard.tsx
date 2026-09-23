@@ -527,7 +527,10 @@ function ShotEditor({
                   />
                 )}
                 {s.tpl &&
-                  TPL[s.tpl]?.fields.map((f) => (
+                  TPL[s.tpl]?.fields
+                    // 产品页镜头的「哪张页面」由上面的模板下拉选,不让手改名字(改错了就找不到页面)
+                    .filter((f) => !(s.tpl === "page" && f.key === "page"))
+                    .map((f) => (
                     <FieldInput key={f.key} f={f} v={s.p?.[f.key]} onChange={(v) => update(k, { ...s, p: { ...(s.p ?? {}), [f.key]: v } })} />
                   ))}
               </div>
