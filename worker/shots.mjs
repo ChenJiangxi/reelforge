@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { shotCountFor, spokenLen, cleanText, CHARS_PER_SEC } from "../shots/timing.mjs";
+import { shotCountFor, spokenLen, cleanText, CHARS_PER_SEC, previewBeat } from "../shots/timing.mjs";
 import { TASTE, playbook } from "./prompts.mjs";
 import { pageDigest, pageShotIssues } from "./pages.mjs";
 
@@ -186,6 +186,17 @@ export function validatePlan(want, fixedByName, source, assetNames = [], allOrde
       if (shots.length > 4) out.push(`${at0} 有 ${shots.length} 个镜头,最多 4 个`);
       // 少切是最常见的毛病(一个镜头撑 5 秒以上就又是 PPT 了):4 个的允许少 1 个,其余不许少
       if (shots.length < need - (need >= 4 ? 1 : 0) || shots.length > need + 1) out.push(`${at0} 约 ${estDur(w.text).toFixed(1)} 秒,该切 ${need} 个镜头,现在 ${shots.length} 个 —— 大约每 3 秒换一次画面`);
+      // 产品页镜头要滚、要推、要划线,太短了只剩一晃:按字数估的时长不到 2.5 秒就打回
+      try {
+        const est = previewBeat(w.text, shots.map((s) => ({ ...s, p: s?.p || {} })));
+        for (const sp of est.spans) {
+          const s = shots[sp.i];
+          const sec = sp.frames / 30;
+          if (s?.tpl === "page" && sec < 2.2) out.push(`${w.name} 第 ${sp.i + 1} 个镜头(产品页)只有约 ${sec.toFixed(1)} 秒 —— 产品页镜头至少 2.5 秒:把它的切点提前,或者和前一个镜头合并;要点多的少放一个`);
+        }
+      } catch {
+        /* 估不出来就不查 */
+      }
       let pos = -1;
       shots.forEach((s, k) => {
         const at = `${w.name} 第 ${k + 1} 个镜头`;

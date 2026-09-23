@@ -92,6 +92,8 @@ export function planPage(layout, p, frames, cues, geom, stage) {
     targets.push({ hit, at: clamp(Math.round(at), 14, Math.max(14, frames - 10)) });
   });
   targets.sort((a, b) => a.at - b.at);
+  // 每个要点至少要 40 帧(推近 21 帧 + 停住看清);镜头短就只留放得下的前几个,别一秒里又滚又推
+  targets.splice(Math.max(1, Math.floor(frames / 40)));
   const vp = geom.vpH;
   const maxScroll = Math.max(0, (layout?.cssH || vp) - vp);
   const Z = p.mode === "page" ? 1.55 : 1.85;
@@ -99,7 +101,9 @@ export function planPage(layout, p, frames, cues, geom, stage) {
   // 开场就停在第一个要点上面一点(切进来就是要讲的那段),只轻轻往下滚一小段再推近 ——
   // 从页面顶上一路滚到底部的要点,一两秒滚几千像素,看着像在甩
   const first = targets[0]?.hit;
-  const y0 = first ? clamp(first.box.y + first.box.h / 2 - vp * 0.38 - vp * 0.3, 0, maxScroll) : 0;
+  // 短镜头(不到 2.5 秒)不滚,切进来就在要点上,直接推
+  const lead = frames < 75 ? 0 : vp * 0.3;
+  const y0 = first ? clamp(first.box.y + first.box.h / 2 - vp * 0.38 - lead, 0, maxScroll) : 0;
   const keys = [{ f: 0, scrollY: y0, z: 1, tx: null, ty: null }];
   let cur = keys[0];
   const put = (k) => {
@@ -135,6 +139,8 @@ export function planPage(layout, p, frames, cues, geom, stage) {
     put({ ...cur, f: at - 10 });
     put({ f: at + 11, scrollY: want, z: Z, tx: cx, ty: cy });
   }
+  // 最后一个要点推到位后如果还要停很久(念完这句还有两三秒),继续极慢地推一点,别停成死帧
+  if (targets.length && keys[keys.length - 1].f < frames - 30) put({ ...cur, f: frames, z: cur.z * 1.05 });
   // 开场如果要停着等(要点已经在屏幕上、不用滚),就慢慢推一点点,别有死帧
   if (keys.length > 2 && keys[1].f > 8 && keys[1].z === 1 && Math.abs(keys[1].scrollY - keys[0].scrollY) < 2) keys[1] = { ...keys[1], z: 1.05 };
   const taps = [];
