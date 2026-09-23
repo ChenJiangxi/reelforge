@@ -18,6 +18,7 @@ import { footageShots } from "./footage-shots.mjs";
 import { shotsReady, shotsVersion, renderBeat } from "./remotion/render.mjs";
 import { timeShots, spokenIndex as shotIndex } from "../shots/timing.mjs";
 import { TPL_LABEL, normalizeShots } from "./shots.mjs";
+import { sceneImage, sceneKey, dataUrl } from "./images.mjs";
 
 export const WORK_ROOT = process.env.WORK_DIR || join(process.cwd(), "data", "work");
 const GAP = 0.18; // 两拍之间的留白(秒)。原来 0.25,叠上 TTS 自带的空白就太长了
@@ -927,7 +928,8 @@ async function ensureInputs(item) {
         assetPaths[s.asset] = { path: await downloadCached(asset.url, join(assetsDir, s.asset)), kind: asset.kind };
       }
       const theme = up.script?.editSettings?.theme || cm.theme || "ink";
-      visuals.push({ kind: "shots", source: "shots", shots, theme, assetPaths, by: sc?.shots?.length ? "you" : "auto", overrides, inserts });
+      const imageStyle = up.script?.editSettings?.imageStyle || "photo";
+      visuals.push({ kind: "shots", source: "shots", shots, theme, imageStyle, cast: up.footage?.cast?.main || null, assetPaths, by: sc?.shots?.length ? "you" : "auto", overrides, inserts });
     } else if (cm.anim) {
       const p = await downloadCached(cm.anim, join(cardsDir, `${cm.name}.webm`));
       visuals.push({ kind: "anim", source: "anim", path: p, overrides, inserts });
@@ -1276,12 +1278,43 @@ async function renderShotsBeat(item, v, { beat, words, beatDur, segDur, W, H, fp
     const nFrames = run.spans.reduce((n, sp) => n + sp.frames, 0);
     const part = join(dir, `seg-${beat}-p${r}.mp4`);
     if (run.kind === "tpl") {
+      // 画面镜头:本地有缓存直接用;素材阶段传过的就下载;都没有(她在网页上新加的)就现在生成
+      const withImg = [];
+      for (const sp of run.spans) {
+        const s0 = v.shots[sp.i];
+        if (s0.tpl !== "scene" || !s0.p?.prompt) {
+          withImg.push(s0.p);
+          continue;
+        }
+        const withMain = s0.p.who === "main" && v.cast?.key;
+        const key = sceneKey(s0.p.prompt, v.imageStyle, item.aspect, withMain ? v.cast.key : "");
+        const imgDir = join(workDir(item, ""), ".images");
+        let path = null;
+        try {
+          const cache = join(imgDir, `${key}.jpg`);
+          if (existsSync(cache)) path = cache;
+          else if (s0.p.src && s0.p.srcKey === key) path = await downloadCached(s0.p.src, join(imgDir, `${key}-dl.jpg`));
+          else {
+            // 她在网页上新加/改过的画面:现在生成;有主角的带上定妆照(本地没有就从素材阶段传的那张下载)
+            mark(item, beat, "生成画面");
+            let ref = null;
+            if (withMain) {
+              const local = join(imgDir, `${v.cast.key}.jpg`);
+              ref = { key: v.cast.key, path: existsSync(local) ? local : await downloadCached(v.cast.src, join(imgDir, `${v.cast.key}-dl.jpg`)) };
+            }
+            path = (await sceneImage(s0.p.prompt, { style: v.imageStyle, aspect: item.aspect, workRoot: workDir(item, ""), ref })).path;
+          }
+        } catch (e) {
+          decisions.push({ beat, topic: "画面", choice: "这张图没生成出来,先用纯色底", why: String(e.message).slice(0, 140), warn: true });
+        }
+        withImg.push(path ? { ...s0.p, src: dataUrl(path) } : { ...s0.p, src: undefined });
+      }
       const props = {
         theme: v.theme,
         W,
         H,
         frames: nFrames,
-        shots: run.spans.map((sp) => ({ tpl: v.shots[sp.i].tpl, p: v.shots[sp.i].p, from: sp.fromFrame - f0, frames: sp.frames, cues: sp.cues })),
+        shots: run.spans.map((sp, j) => ({ tpl: v.shots[sp.i].tpl, p: withImg[j], from: sp.fromFrame - f0, frames: sp.frames, cues: sp.cues })),
       };
       mark(item, beat, `渲镜头动画(${run.spans.length} 个)`);
       const res = await cached(part, { kind: "shots", props, tv: shotsVersion() }, async (tmp) => {

@@ -8,7 +8,7 @@ import { Player } from "@remotion/player";
 import { Beat, type BeatProps, type ShotSpec } from "@/shots/Shot";
 import { estimatedIndex, fromPositions, previewBeat } from "@/shots/timing.mjs";
 import { TEMPLATES, TPL, type Field, type Shot } from "@/lib/shot-catalog";
-import { THEME_LABELS } from "@/lib/stages";
+import { IMAGE_STYLE_LABELS, THEME_LABELS } from "@/lib/stages";
 
 type Asset = { name: string; url: string; kind: string };
 export type ShotBeat = { name: string; text: string; image?: string; shots: Shot[]; mine: boolean };
@@ -66,12 +66,16 @@ export function ShotBoard({
   beats,
   theme,
   themeMine,
+  imageStyle = "photo",
+  imageStyleMine = false,
 }: {
   projectId: string;
   aspect: string;
   beats: ShotBeat[];
   theme: string;
   themeMine: boolean;
+  imageStyle?: string;
+  imageStyleMine?: boolean;
 }) {
   const router = useRouter();
   const [sel, setSel] = useState<string | null>(null);
@@ -88,12 +92,12 @@ export function ShotBoard({
   const total = beats.reduce((n, b) => n + b.shots.length, 0);
   const cur = beats.find((b) => b.name === sel) ?? null;
 
-  async function setTheme(v: string) {
+  async function setProject(set: Record<string, string>) {
     setBusy(true);
     const r = await fetch(`/api/project/${projectId}/override`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project: { theme: v } }),
+      body: JSON.stringify({ project: set }),
     });
     const j = await r.json().catch(() => ({}));
     setMsg(j.summary ?? j.error ?? null);
@@ -108,12 +112,28 @@ export function ShotBoard({
         <span className="text-muted-foreground">
           {beats.length} 拍 · {total} 个镜头 · 点一拍直接改
         </span>
-        <label className="ml-auto flex items-center gap-1.5 text-muted-foreground">
+        <label className="ml-auto flex items-center gap-1.5 text-muted-foreground" title="画面镜头(AI 生成的图)用什么风格;换了会重做素材、把所有画面重新生成">
+          配图
+          <select
+            value={imageStyle}
+            disabled={busy}
+            onChange={(e) => setProject({ imageStyle: e.target.value })}
+            className="rounded border border-border bg-background px-1.5 py-0.5 text-foreground"
+          >
+            {Object.entries(IMAGE_STYLE_LABELS).map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
+          {imageStyleMine && <span className="text-[10px] text-accent">你定的</span>}
+        </label>
+        <label className="flex items-center gap-1.5 text-muted-foreground">
           配色
           <select
             value={theme}
             disabled={busy}
-            onChange={(e) => setTheme(e.target.value)}
+            onChange={(e) => setProject({ theme: e.target.value })}
             className="rounded border border-border bg-background px-1.5 py-0.5 text-foreground"
           >
             {Object.entries(THEME_LABELS).map(([v, l]) => (
@@ -262,6 +282,21 @@ function ShotEditor({
     } else setCands({ index: k, options });
   }
 
+  async function regen(k: number) {
+    const s = draft[k];
+    setBusy(`img-${k}`);
+    setErr(null);
+    const r = await fetch(`/api/project/${projectId}/shots/image`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: s.p?.prompt ?? "", who: s.p?.who }),
+    });
+    const j = await r.json().catch(() => ({}));
+    setBusy(null);
+    if (!r.ok) return setErr(j.error ?? "没生成出来");
+    update(k, { ...s, p: { ...(s.p ?? {}), src: j.src, srcKey: j.srcKey } });
+  }
+
   async function save(reset = false) {
     setBusy("save");
     setErr(null);
@@ -405,6 +440,26 @@ function ShotEditor({
                 {s.tpl && TPL[s.tpl] && (
                   <p className="text-[11px] leading-snug text-muted-foreground">{TPL[s.tpl].use}</p>
                 )}
+                {s.tpl === "scene" && (
+                  <div className="flex items-start gap-2">
+                    {typeof s.p?.src === "string" && s.p.src ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={String(s.p.src)} alt="" className="h-28 w-16 shrink-0 rounded border border-border object-cover" />
+                    ) : (
+                      <span className="flex h-28 w-16 shrink-0 items-center justify-center rounded border border-dashed border-border text-[10px] text-muted-foreground">还没图</span>
+                    )}
+                    <div className="space-y-1">
+                      <button
+                        onClick={() => regen(k)}
+                        disabled={!!busy}
+                        className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:border-foreground/30 hover:text-foreground disabled:opacity-40"
+                      >
+                        {busy === `img-${k}` ? "生成中…(约 10 秒)" : "按下面的描述重新生成"}
+                      </button>
+                      <p className="text-[10px] leading-snug text-muted-foreground">改了描述不点也行,保存时会自动生成。一张约 0.3 元。</p>
+                    </div>
+                  </div>
+                )}
                 {s.tpl &&
                   TPL[s.tpl]?.fields.map((f) => (
                     <FieldInput key={f.key} f={f} v={s.p?.[f.key]} onChange={(v) => update(k, { ...s, p: { ...(s.p ?? {}), [f.key]: v } })} />
@@ -470,6 +525,7 @@ function Counter({ s, max }: { s: string; max?: number }) {
 }
 
 function FieldInput({ f, v, onChange }: { f: Field; v: unknown; onChange: (v: unknown) => void }) {
+  if (f.type === "hidden") return null;
   const head = (extra?: React.ReactNode) => (
     <span className="mb-0.5 flex items-baseline gap-1.5 text-muted-foreground">
       {f.label}
@@ -502,7 +558,7 @@ function FieldInput({ f, v, onChange }: { f: Field; v: unknown; onChange: (v: un
           <option value="">(默认)</option>
           {f.options?.map((o) => (
             <option key={o} value={o}>
-              {o}
+              {f.labels?.[o] ?? o}
             </option>
           ))}
         </select>

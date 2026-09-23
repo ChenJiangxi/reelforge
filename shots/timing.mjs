@@ -86,6 +86,8 @@ export function cueTexts(tpl, p = {}) {
       return ["", arr(p.highlight)[0] ?? ""];
     case "timeline":
       return [String(p.peak ?? "")];
+    case "scene":
+      return [p.big ?? ""];
     default:
       return [];
   }

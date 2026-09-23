@@ -2,15 +2,122 @@
   "_": "镜头模板目录。规划提示词(worker/prompts.mjs)和网页上的镜头编辑器都读这份。改字段要同时改 shots/tpl 里的组件。",
   "templates": [
     {
+      "id": "scene",
+      "label": "画面",
+      "use": "讲情绪、场景、人物状态、比喻、命理意象的地方用它:按 prompt 生成一张画面铺满全屏,镜头缓慢运动,上面最多压一句关键词。片子不能全是字 —— 全片三到五成镜头应该是画面。画面里有主角时 who 写 main(全片同一个人)",
+      "cues": "big",
+      "fields": [
+        {
+          "key": "prompt",
+          "label": "画面描述(生图用,不上屏)",
+          "type": "text",
+          "max": 90
+        },
+        {
+          "key": "who",
+          "label": "主角出镜",
+          "type": "select",
+          "options": [
+            "main",
+            "none"
+          ],
+          "optional": true,
+          "labels": {
+            "main": "主角在画面里",
+            "none": "没有主角"
+          }
+        },
+        {
+          "key": "big",
+          "label": "压在画面上的字",
+          "type": "text",
+          "max": 10,
+          "optional": true
+        },
+        {
+          "key": "kicker",
+          "label": "小标签",
+          "type": "text",
+          "max": 8,
+          "optional": true
+        },
+        {
+          "key": "motion",
+          "label": "镜头运动",
+          "type": "select",
+          "options": [
+            "push",
+            "pull",
+            "left",
+            "right",
+            "up"
+          ],
+          "optional": true,
+          "labels": {
+            "push": "慢慢推近",
+            "pull": "慢慢拉远",
+            "left": "向左移",
+            "right": "向右移",
+            "up": "向上移"
+          }
+        },
+        {
+          "key": "place",
+          "label": "字的位置",
+          "type": "select",
+          "options": [
+            "top",
+            "center"
+          ],
+          "optional": true,
+          "labels": {
+            "top": "上方",
+            "center": "画面中间"
+          }
+        },
+        {
+          "key": "src",
+          "label": "图",
+          "type": "hidden",
+          "optional": true
+        },
+        {
+          "key": "srcKey",
+          "label": "图的缓存键",
+          "type": "hidden",
+          "optional": true
+        }
+      ],
+      "example": {
+        "prompt": "她和男朋友坐在咖啡馆里背对背生闷气,她抱着手臂看向窗外,男生低头刷手机,暖色逆光",
+        "who": "main",
+        "big": "上头快,下头也快"
+      }
+    },
+    {
       "id": "stomp",
       "label": "砸字",
       "use": "钩子、一句话定调、全片最狠的那句。字一个个砸下来。一条片最多用 2 次",
       "cues": "none",
       "fields": [
-        { "key": "small", "label": "上面一行小字", "type": "text", "max": 12, "optional": true },
-        { "key": "big", "label": "大字", "type": "text", "max": 12 }
+        {
+          "key": "small",
+          "label": "上面一行小字",
+          "type": "text",
+          "max": 12,
+          "optional": true
+        },
+        {
+          "key": "big",
+          "label": "大字",
+          "type": "text",
+          "max": 12
+        }
       ],
-      "example": { "small": "别再拿星座合盘猜了", "big": "正缘写在你八字里" }
+      "example": {
+        "small": "别再拿星座合盘猜了",
+        "big": "正缘写在你八字里"
+      }
     },
     {
       "id": "ask",
@@ -18,10 +125,24 @@
       "use": "抛问题、转折(\"那为什么…?\"\"问题是…\")。小字先出,大问句再落,镜头慢慢推近",
       "cues": "none",
       "fields": [
-        { "key": "a", "label": "铺垫小字", "type": "text", "max": 14, "optional": true },
-        { "key": "b", "label": "大问句", "type": "text", "max": 14 }
+        {
+          "key": "a",
+          "label": "铺垫小字",
+          "type": "text",
+          "max": 14,
+          "optional": true
+        },
+        {
+          "key": "b",
+          "label": "大问句",
+          "type": "text",
+          "max": 14
+        }
       ],
-      "example": { "a": "不是没遇到好的", "b": "是窗口还没开?" }
+      "example": {
+        "a": "不是没遇到好的",
+        "b": "是窗口还没开?"
+      }
     },
     {
       "id": "lines",
@@ -29,10 +150,30 @@
       "use": "口播里有 2-4 个并列短句/排比/递进时,念到哪句落哪句,最后一句高亮",
       "cues": "lines",
       "fields": [
-        { "key": "kicker", "label": "顶部标签", "type": "text", "max": 10, "optional": true },
-        { "key": "lines", "label": "短句", "type": "list", "min": 2, "max": 4, "itemMax": 10 }
+        {
+          "key": "kicker",
+          "label": "顶部标签",
+          "type": "text",
+          "max": 10,
+          "optional": true
+        },
+        {
+          "key": "lines",
+          "label": "短句",
+          "type": "list",
+          "min": 2,
+          "max": 4,
+          "itemMax": 10
+        }
       ],
-      "example": { "kicker": "偏缘的样子", "lines": ["上来特别上头", "聊啥都投机", "三个月就开始吵"] }
+      "example": {
+        "kicker": "偏缘的样子",
+        "lines": [
+          "上来特别上头",
+          "聊啥都投机",
+          "三个月就开始吵"
+        ]
+      }
     },
     {
       "id": "quote",
@@ -40,11 +181,31 @@
       "use": "能单独截图传播的一句话、结尾落点。宋体大字逐字浮现,重点词描金",
       "cues": "none",
       "fields": [
-        { "key": "text", "label": "金句", "type": "text", "max": 28 },
-        { "key": "em", "label": "重点词(必须是金句里的原文)", "type": "text", "max": 8, "optional": true },
-        { "key": "by", "label": "出处", "type": "text", "max": 10, "optional": true }
+        {
+          "key": "text",
+          "label": "金句",
+          "type": "text",
+          "max": 28
+        },
+        {
+          "key": "em",
+          "label": "重点词(必须是金句里的原文)",
+          "type": "text",
+          "max": 8,
+          "optional": true
+        },
+        {
+          "key": "by",
+          "label": "出处",
+          "type": "text",
+          "max": 10,
+          "optional": true
+        }
       ],
-      "example": { "text": "别在错的人身上,把正缘的运气给耗没了", "em": "正缘的运气" }
+      "example": {
+        "text": "别在错的人身上,把正缘的运气给耗没了",
+        "em": "正缘的运气"
+      }
     },
     {
       "id": "glyph",
@@ -52,13 +213,59 @@
       "use": "一个字/一个术语就能讲完一件事(合、冲、官、杀、偏缘)。巨大的宋体字+术语标签+一句解释",
       "cues": "chips,note",
       "fields": [
-        { "key": "glyph", "label": "大字(1-2 个字)", "type": "text", "max": 2 },
-        { "key": "label", "label": "字下面的名称", "type": "text", "max": 6, "optional": true },
-        { "key": "chips", "label": "术语标签", "type": "list", "min": 0, "max": 3, "itemMax": 4, "optional": true },
-        { "key": "note", "label": "一句解释", "type": "text", "max": 24, "optional": true },
-        { "key": "tone", "label": "颜色", "type": "select", "options": ["main", "alt"], "optional": true }
+        {
+          "key": "glyph",
+          "label": "大字(1-2 个字)",
+          "type": "text",
+          "max": 2
+        },
+        {
+          "key": "label",
+          "label": "字下面的名称",
+          "type": "text",
+          "max": 6,
+          "optional": true
+        },
+        {
+          "key": "chips",
+          "label": "术语标签",
+          "type": "list",
+          "min": 0,
+          "max": 3,
+          "itemMax": 4,
+          "optional": true
+        },
+        {
+          "key": "note",
+          "label": "一句解释",
+          "type": "text",
+          "max": 24,
+          "optional": true
+        },
+        {
+          "key": "tone",
+          "label": "颜色",
+          "type": "select",
+          "options": [
+            "main",
+            "alt"
+          ],
+          "optional": true,
+          "labels": {
+            "main": "主色",
+            "alt": "第二色(粉)"
+          }
+        }
       ],
-      "example": { "glyph": "官", "label": "正 官 旺", "chips": ["靠谱", "稳重"], "note": "对方大概率是踏实过日子的那种" }
+      "example": {
+        "glyph": "官",
+        "label": "正 官 旺",
+        "chips": [
+          "靠谱",
+          "稳重"
+        ],
+        "note": "对方大概率是踏实过日子的那种"
+      }
     },
     {
       "id": "number",
@@ -66,12 +273,39 @@
       "use": "一个关键数字/年份/分数。数字滚出来。数字必须是台词或参考材料里真有的",
       "cues": "value",
       "fields": [
-        { "key": "kicker", "label": "顶部标签", "type": "text", "max": 12, "optional": true },
-        { "key": "value", "label": "数字", "type": "text", "max": 8 },
-        { "key": "unit", "label": "单位", "type": "text", "max": 3, "optional": true },
-        { "key": "note", "label": "说明", "type": "text", "max": 20, "optional": true }
+        {
+          "key": "kicker",
+          "label": "顶部标签",
+          "type": "text",
+          "max": 12,
+          "optional": true
+        },
+        {
+          "key": "value",
+          "label": "数字",
+          "type": "text",
+          "max": 8
+        },
+        {
+          "key": "unit",
+          "label": "单位",
+          "type": "text",
+          "max": 3,
+          "optional": true
+        },
+        {
+          "key": "note",
+          "label": "说明",
+          "type": "text",
+          "max": 20,
+          "optional": true
+        }
       ],
-      "example": { "kicker": "正缘指数最高的一年", "value": "2032", "note": "壬子年 · 合动夫妻宫" }
+      "example": {
+        "kicker": "正缘指数最高的一年",
+        "value": "2032",
+        "note": "壬子年 · 合动夫妻宫"
+      }
     },
     {
       "id": "gauge",
@@ -79,11 +313,31 @@
       "use": "一个 0-100 的分数/指数/百分比。圆环扫到分数。数字必须真实",
       "cues": "value",
       "fields": [
-        { "key": "value", "label": "分数", "type": "number" },
-        { "key": "label", "label": "分数名", "type": "text", "max": 6, "optional": true },
-        { "key": "note", "label": "说明", "type": "text", "max": 18, "optional": true }
+        {
+          "key": "value",
+          "label": "分数",
+          "type": "number"
+        },
+        {
+          "key": "label",
+          "label": "分数名",
+          "type": "text",
+          "max": 6,
+          "optional": true
+        },
+        {
+          "key": "note",
+          "label": "说明",
+          "type": "text",
+          "max": 18,
+          "optional": true
+        }
       ],
-      "example": { "value": 73, "label": "缘分指数", "note": "两个人的生日输进去" }
+      "example": {
+        "value": 73,
+        "label": "缘分指数",
+        "note": "两个人的生日输进去"
+      }
     },
     {
       "id": "bars",
@@ -91,12 +345,77 @@
       "use": "3-10 个真实数值对比(每年分数、各维度得分)。柱子依次长出,再点亮要说的那几根",
       "cues": "grow,highlight",
       "fields": [
-        { "key": "title", "label": "标题", "type": "text", "max": 12, "optional": true },
-        { "key": "items", "label": "柱子", "type": "items", "min": 3, "max": 10, "of": [{ "key": "label", "label": "名称", "type": "text", "max": 6 }, { "key": "value", "label": "数值", "type": "number" }, { "key": "tag", "label": "小标签", "type": "text", "max": 3, "optional": true }] },
-        { "key": "highlight", "label": "点亮哪几根(填名称)", "type": "list", "min": 0, "max": 3, "itemMax": 6, "optional": true },
-        { "key": "unit", "label": "单位", "type": "text", "max": 3, "optional": true }
+        {
+          "key": "title",
+          "label": "标题",
+          "type": "text",
+          "max": 12,
+          "optional": true
+        },
+        {
+          "key": "items",
+          "label": "柱子",
+          "type": "items",
+          "min": 3,
+          "max": 10,
+          "of": [
+            {
+              "key": "label",
+              "label": "名称",
+              "type": "text",
+              "max": 6
+            },
+            {
+              "key": "value",
+              "label": "数值",
+              "type": "number"
+            },
+            {
+              "key": "tag",
+              "label": "小标签",
+              "type": "text",
+              "max": 3,
+              "optional": true
+            }
+          ]
+        },
+        {
+          "key": "highlight",
+          "label": "点亮哪几根(填名称)",
+          "type": "list",
+          "min": 0,
+          "max": 3,
+          "itemMax": 6,
+          "optional": true
+        },
+        {
+          "key": "unit",
+          "label": "单位",
+          "type": "text",
+          "max": 3,
+          "optional": true
+        }
       ],
-      "example": { "title": "五个维度", "items": [{ "label": "性格契合", "value": 65 }, { "label": "情感缘分", "value": 78 }, { "label": "事业互助", "value": 70 }], "highlight": ["情感缘分"] }
+      "example": {
+        "title": "五个维度",
+        "items": [
+          {
+            "label": "性格契合",
+            "value": 65
+          },
+          {
+            "label": "情感缘分",
+            "value": 78
+          },
+          {
+            "label": "事业互助",
+            "value": 70
+          }
+        ],
+        "highlight": [
+          "情感缘分"
+        ]
+      }
     },
     {
       "id": "timeline",
@@ -104,11 +423,65 @@
       "use": "按年份/阶段排开的一串节点,镜头横移、停在要说的那一格再推近。有真实数值就带上",
       "cues": "stop",
       "fields": [
-        { "key": "title", "label": "标题", "type": "text", "max": 12, "optional": true },
-        { "key": "points", "label": "节点", "type": "items", "min": 3, "max": 12, "of": [{ "key": "label", "label": "年份/阶段", "type": "text", "max": 6 }, { "key": "value", "label": "数值", "type": "number", "optional": true }, { "key": "note", "label": "小注", "type": "text", "max": 4, "optional": true }] },
-        { "key": "peak", "label": "停在哪一格(填年份/阶段)", "type": "text", "max": 6, "optional": true }
+        {
+          "key": "title",
+          "label": "标题",
+          "type": "text",
+          "max": 12,
+          "optional": true
+        },
+        {
+          "key": "points",
+          "label": "节点",
+          "type": "items",
+          "min": 3,
+          "max": 12,
+          "of": [
+            {
+              "key": "label",
+              "label": "年份/阶段",
+              "type": "text",
+              "max": 6
+            },
+            {
+              "key": "value",
+              "label": "数值",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "key": "note",
+              "label": "小注",
+              "type": "text",
+              "max": 4,
+              "optional": true
+            }
+          ]
+        },
+        {
+          "key": "peak",
+          "label": "停在哪一格(填年份/阶段)",
+          "type": "text",
+          "max": 6,
+          "optional": true
+        }
       ],
-      "example": { "title": "未来十年", "points": [{ "label": "2030" }, { "label": "2031" }, { "label": "2032", "note": "合" }], "peak": "2032" }
+      "example": {
+        "title": "未来十年",
+        "points": [
+          {
+            "label": "2030"
+          },
+          {
+            "label": "2031"
+          },
+          {
+            "label": "2032",
+            "note": "合"
+          }
+        ],
+        "peak": "2032"
+      }
     },
     {
       "id": "list",
@@ -116,10 +489,47 @@
       "use": "列举 2-5 条(功能、信号、步骤、要点)。念到哪条出哪条",
       "cues": "items",
       "fields": [
-        { "key": "title", "label": "标题", "type": "text", "max": 14, "optional": true },
-        { "key": "items", "label": "条目", "type": "items", "min": 2, "max": 5, "of": [{ "key": "text", "label": "内容", "type": "text", "max": 16 }, { "key": "sub", "label": "小注", "type": "text", "max": 14, "optional": true }] }
+        {
+          "key": "title",
+          "label": "标题",
+          "type": "text",
+          "max": 14,
+          "optional": true
+        },
+        {
+          "key": "items",
+          "label": "条目",
+          "type": "items",
+          "min": 2,
+          "max": 5,
+          "of": [
+            {
+              "key": "text",
+              "label": "内容",
+              "type": "text",
+              "max": 16
+            },
+            {
+              "key": "sub",
+              "label": "小注",
+              "type": "text",
+              "max": 14,
+              "optional": true
+            }
+          ]
+        }
       ],
-      "example": { "title": "正缘画像里有什么", "items": [{ "text": "对方是什么气质" }, { "text": "桃花窗口什么时候开" }] }
+      "example": {
+        "title": "正缘画像里有什么",
+        "items": [
+          {
+            "text": "对方是什么气质"
+          },
+          {
+            "text": "桃花窗口什么时候开"
+          }
+        ]
+      }
     },
     {
       "id": "evidence",
@@ -127,14 +537,58 @@
       "use": "先亮结论(一个年份/判断/分数),再逐条列出依据。适合\"为什么是这样\"",
       "cues": "items",
       "fields": [
-        { "key": "head", "label": "结论(大字)", "type": "text", "max": 8 },
-        { "key": "side", "label": "结论旁小字", "type": "text", "max": 4, "optional": true },
-        { "key": "score", "label": "右侧数字", "type": "text", "max": 4, "optional": true },
-        { "key": "label", "label": "依据标题", "type": "text", "max": 8, "optional": true },
-        { "key": "items", "label": "依据", "type": "list", "min": 2, "max": 4, "itemMax": 18 },
-        { "key": "foot", "label": "收尾一句", "type": "text", "max": 20, "optional": true }
+        {
+          "key": "head",
+          "label": "结论(大字)",
+          "type": "text",
+          "max": 8
+        },
+        {
+          "key": "side",
+          "label": "结论旁小字",
+          "type": "text",
+          "max": 4,
+          "optional": true
+        },
+        {
+          "key": "score",
+          "label": "右侧数字",
+          "type": "text",
+          "max": 4,
+          "optional": true
+        },
+        {
+          "key": "label",
+          "label": "依据标题",
+          "type": "text",
+          "max": 8,
+          "optional": true
+        },
+        {
+          "key": "items",
+          "label": "依据",
+          "type": "list",
+          "min": 2,
+          "max": 4,
+          "itemMax": 18
+        },
+        {
+          "key": "foot",
+          "label": "收尾一句",
+          "type": "text",
+          "max": 20,
+          "optional": true
+        }
       ],
-      "example": { "head": "2032", "side": "壬子", "label": "引 动 依 据", "items": ["流年正官到位", "子丑六合,合动夫妻宫"] }
+      "example": {
+        "head": "2032",
+        "side": "壬子",
+        "label": "引 动 依 据",
+        "items": [
+          "流年正官到位",
+          "子丑六合,合动夫妻宫"
+        ]
+      }
     },
     {
       "id": "compare",
@@ -142,12 +596,57 @@
       "use": "两样东西正面对比(女命 vs 男命、老办法 vs 新办法)。两张卡从两边进来,下面落结论",
       "cues": "left,right,verdict",
       "fields": [
-        { "key": "left", "label": "左边", "type": "side" },
-        { "key": "right", "label": "右边", "type": "side" },
-        { "key": "verdict", "label": "结论", "type": "text", "max": 16, "optional": true },
-        { "key": "hl", "label": "高亮哪边", "type": "select", "options": ["right", "left", "none"], "optional": true }
+        {
+          "key": "left",
+          "label": "左边",
+          "type": "side"
+        },
+        {
+          "key": "right",
+          "label": "右边",
+          "type": "side"
+        },
+        {
+          "key": "verdict",
+          "label": "结论",
+          "type": "text",
+          "max": 16,
+          "optional": true
+        },
+        {
+          "key": "hl",
+          "label": "高亮哪边",
+          "type": "select",
+          "options": [
+            "right",
+            "left",
+            "none"
+          ],
+          "optional": true,
+          "labels": {
+            "right": "右边",
+            "left": "左边",
+            "none": "都不高亮"
+          }
+        }
       ],
-      "example": { "left": { "title": "找老师傅", "lines": ["排半天盘", "看他心情"] }, "right": { "title": "自己排盘", "lines": ["输个生日", "一条条列"] }, "verdict": "答案本来就在你命盘里" }
+      "example": {
+        "left": {
+          "title": "找老师傅",
+          "lines": [
+            "排半天盘",
+            "看他心情"
+          ]
+        },
+        "right": {
+          "title": "自己排盘",
+          "lines": [
+            "输个生日",
+            "一条条列"
+          ]
+        },
+        "verdict": "答案本来就在你命盘里"
+      }
     },
     {
       "id": "diagram",
@@ -155,11 +654,61 @@
       "use": "A 生/克/合/决定 B 这种关系。2 个节点横摆,3-4 个竖串,箭头上写关系词",
       "cues": "nodes",
       "fields": [
-        { "key": "title", "label": "标题", "type": "text", "max": 10, "optional": true },
-        { "key": "nodes", "label": "节点", "type": "items", "min": 2, "max": 4, "of": [{ "key": "label", "label": "名称", "type": "text", "max": 8 }, { "key": "sub", "label": "小注", "type": "text", "max": 10, "optional": true }] },
-        { "key": "links", "label": "箭头上的关系词(比节点少一个)", "type": "list", "min": 0, "max": 3, "itemMax": 3, "optional": true }
+        {
+          "key": "title",
+          "label": "标题",
+          "type": "text",
+          "max": 10,
+          "optional": true
+        },
+        {
+          "key": "nodes",
+          "label": "节点",
+          "type": "items",
+          "min": 2,
+          "max": 4,
+          "of": [
+            {
+              "key": "label",
+              "label": "名称",
+              "type": "text",
+              "max": 8
+            },
+            {
+              "key": "sub",
+              "label": "小注",
+              "type": "text",
+              "max": 10,
+              "optional": true
+            }
+          ]
+        },
+        {
+          "key": "links",
+          "label": "箭头上的关系词(比节点少一个)",
+          "type": "list",
+          "min": 0,
+          "max": 3,
+          "itemMax": 3,
+          "optional": true
+        }
       ],
-      "example": { "title": "伤官见官", "nodes": [{ "label": "伤官", "sub": "叛逆 · 才华" }, { "label": "正官", "sub": "规则 · 管束" }], "links": ["克"] }
+      "example": {
+        "title": "伤官见官",
+        "nodes": [
+          {
+            "label": "伤官",
+            "sub": "叛逆 · 才华"
+          },
+          {
+            "label": "正官",
+            "sub": "规则 · 管束"
+          }
+        ],
+        "links": [
+          "克"
+        ]
+      }
     },
     {
       "id": "pillars",
@@ -167,11 +716,74 @@
       "use": "讲八字四柱(年月日时)的具体干支。四张牌依次落下,要讲的那柱点亮。干支必须真实,没有具体八字就别用",
       "cues": "cols",
       "fields": [
-        { "key": "title", "label": "标题", "type": "text", "max": 10, "optional": true },
-        { "key": "cols", "label": "柱", "type": "items", "min": 2, "max": 4, "of": [{ "key": "head", "label": "柱名", "type": "text", "max": 3 }, { "key": "top", "label": "天干", "type": "text", "max": 1 }, { "key": "bottom", "label": "地支", "type": "text", "max": 1 }, { "key": "note", "label": "小注", "type": "text", "max": 3, "optional": true }] },
-        { "key": "mark", "label": "点亮哪柱(填柱名)", "type": "list", "min": 0, "max": 2, "itemMax": 3, "optional": true }
+        {
+          "key": "title",
+          "label": "标题",
+          "type": "text",
+          "max": 10,
+          "optional": true
+        },
+        {
+          "key": "cols",
+          "label": "柱",
+          "type": "items",
+          "min": 2,
+          "max": 4,
+          "of": [
+            {
+              "key": "head",
+              "label": "柱名",
+              "type": "text",
+              "max": 3
+            },
+            {
+              "key": "top",
+              "label": "天干",
+              "type": "text",
+              "max": 1
+            },
+            {
+              "key": "bottom",
+              "label": "地支",
+              "type": "text",
+              "max": 1
+            },
+            {
+              "key": "note",
+              "label": "小注",
+              "type": "text",
+              "max": 3,
+              "optional": true
+            }
+          ]
+        },
+        {
+          "key": "mark",
+          "label": "点亮哪柱(填柱名)",
+          "type": "list",
+          "min": 0,
+          "max": 2,
+          "itemMax": 3,
+          "optional": true
+        }
       ],
-      "example": { "cols": [{ "head": "年柱", "top": "庚", "bottom": "午" }, { "head": "日柱", "top": "丙", "bottom": "申" }], "mark": ["日柱"] }
+      "example": {
+        "cols": [
+          {
+            "head": "年柱",
+            "top": "庚",
+            "bottom": "午"
+          },
+          {
+            "head": "日柱",
+            "top": "丙",
+            "bottom": "申"
+          }
+        ],
+        "mark": [
+          "日柱"
+        ]
+      }
     },
     {
       "id": "table",
@@ -179,12 +791,55 @@
       "use": "多项 × 多方的对照(2-3 列、2-5 行)。行一条条滑上来,强调的那一列描金",
       "cues": "rows",
       "fields": [
-        { "key": "title", "label": "标题", "type": "text", "max": 12, "optional": true },
-        { "key": "cols", "label": "列头", "type": "list", "min": 2, "max": 3, "itemMax": 6 },
-        { "key": "rows", "label": "行(每行和列头一样多格)", "type": "rows", "min": 2, "max": 5, "itemMax": 10 },
-        { "key": "hl", "label": "强调第几列(从 0 数)", "type": "number", "optional": true }
+        {
+          "key": "title",
+          "label": "标题",
+          "type": "text",
+          "max": 12,
+          "optional": true
+        },
+        {
+          "key": "cols",
+          "label": "列头",
+          "type": "list",
+          "min": 2,
+          "max": 3,
+          "itemMax": 6
+        },
+        {
+          "key": "rows",
+          "label": "行(每行和列头一样多格)",
+          "type": "rows",
+          "min": 2,
+          "max": 5,
+          "itemMax": 10
+        },
+        {
+          "key": "hl",
+          "label": "强调第几列(从 0 数)",
+          "type": "number",
+          "optional": true
+        }
       ],
-      "example": { "cols": ["", "偏缘", "正缘"], "rows": [["开头", "特别上头", "平平淡淡"], ["三个月后", "开始吵", "越处越稳"]] }
+      "example": {
+        "cols": [
+          "",
+          "偏缘",
+          "正缘"
+        ],
+        "rows": [
+          [
+            "开头",
+            "特别上头",
+            "平平淡淡"
+          ],
+          [
+            "三个月后",
+            "开始吵",
+            "越处越稳"
+          ]
+        ]
+      }
     }
   ]
 }

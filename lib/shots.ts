@@ -1,6 +1,9 @@
 import { prisma } from "@/lib/db";
 import { requeue } from "@/lib/rerun";
-import { projectAssets } from "@/lib/media";
+import fs from "node:fs";
+import path from "node:path";
+import { projectAssets, projectMediaDir } from "@/lib/media";
+import { imageRequest, sceneKey } from "@/shots/image-style.mjs";
 import { TEMPLATES, TPL, type Field, type Shot } from "@/lib/shot-catalog";
 export { TEMPLATES, TPL, type Field, type Shot };
 
@@ -60,6 +63,8 @@ function cleanField(f: Field, v: unknown): unknown {
     }
     case "rows":
       return (Array.isArray(v) ? v : []).slice(0, 6).map((r) => (Array.isArray(r) ? r.map((c) => clip(c, cap(f.itemMax))) : []));
+    case "hidden":
+      return typeof v === "string" ? clip(v, 600) : undefined;
   }
   return v;
 }
@@ -75,6 +80,73 @@ function assetNamesOf(projectId: string) {
   return projectAssets(projectId).map((a) => a.name);
 }
 
+// ── 画面镜头的图:她在网页上加的/改了描述的,保存时在服务端直接生成(一张约 7 秒) ────────
+
+async function settingsOf(projectId: string) {
+  const [project, { art }, footage] = await Promise.all([
+    prisma.project.findUnique({ where: { id: projectId } }),
+    scriptOf(projectId),
+    prisma.stage.findFirst({ where: { projectId, kind: "footage" } }),
+  ]);
+  const fArt = footage?.artifacts ? JSON.parse(footage.artifacts) : {};
+  const cast = fArt.cast?.main as { desc: string; key: string; src: string } | undefined;
+  return { aspect: project?.aspect ?? "9:16", style: (art.editSettings?.imageStyle as string) || "photo", cast };
+}
+
+/** 主角定妆照的 data URL(素材阶段传到服务器上的那张) */
+function castRef(projectId: string, cast?: { key: string; src: string }) {
+  if (!cast?.src) return null;
+  const name = cast.src.split("?")[0].split("/").pop() ?? "";
+  const file = path.join(projectMediaDir(projectId), name);
+  if (!name || !fs.existsSync(file)) return null;
+  const buf = fs.readFileSync(file);
+  return `data:${buf[0] === 0x89 ? "image/png" : "image/jpeg"};base64,${buf.toString("base64")}`;
+}
+
+export async function generateScene(projectId: string, prompt: string, who?: string) {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) return { ok: false as const, error: "服务器还没配 LLM key" };
+  const text = String(prompt ?? "").trim();
+  if ([...text].length < 6) return { ok: false as const, error: "画面描述太短,写清楚谁、在哪、在做什么" };
+  const { aspect, style, cast } = await settingsOf(projectId);
+  const ref = who === "main" ? castRef(projectId, cast) : null;
+  const k = sceneKey(text, style, aspect, ref && cast ? cast.key : "");
+  const dir = projectMediaDir(projectId);
+  const file = path.join(dir, `scene-${k}.png`);
+  const url = `/api/media/${projectId}/scene-${k}.png`;
+  if (fs.existsSync(file)) return { ok: true as const, src: url, srcKey: k };
+  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    signal: AbortSignal.timeout(90_000),
+    method: "POST",
+    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+    body: JSON.stringify(imageRequest(text, style, aspect, process.env.IMAGE_MODEL || undefined, ref)),
+  });
+  const j = await r.json().catch(() => ({}));
+  const img: string | undefined = j.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+  if (!r.ok || !img) return { ok: false as const, error: r.ok ? "没生成出来(可能被安全策略拦了),改改描述再试" : `生图接口 ${r.status}` };
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, Buffer.from(img.split(",")[1], "base64"));
+  return { ok: true as const, src: url, srcKey: k };
+}
+
+/** 保存前把画面镜头的图补齐:描述改了(缓存键对不上)或还没图的,现在生成 */
+async function ensureSceneImages(projectId: string, shots: Shot[]) {
+  const { aspect, style, cast } = await settingsOf(projectId);
+  const errors: string[] = [];
+  await Promise.all(
+    shots.map(async (s) => {
+      if (s.tpl !== "scene" || !s.p?.prompt) return;
+      const withMain = s.p.who === "main" && !!castRef(projectId, cast);
+      const k = sceneKey(String(s.p.prompt), style, aspect, withMain && cast ? cast.key : "");
+      if (s.p.src && s.p.srcKey === k) return;
+      const r = await generateScene(projectId, String(s.p.prompt), String(s.p.who ?? ""));
+      if (r.ok) s.p = { ...s.p, src: r.src, srcKey: r.srcKey };
+      else errors.push(r.error);
+    }),
+  );
+  return errors;
+}
+
 export async function applyShots(projectId: string, beat: string, shots: unknown | null) {
   const { stage, art, clips } = await scriptOf(projectId);
   if (!stage || !clips.length) return { ok: false as const, error: "脚本还没有分拍" };
@@ -88,6 +160,8 @@ export async function applyShots(projectId: string, beat: string, shots: unknown
   } else {
     const clean = normalizeShots(shots, assetNamesOf(projectId));
     if (!clean.length) return { ok: false as const, error: "至少要有一个镜头" };
+    const imgErr = await ensureSceneImages(projectId, clean);
+    if (imgErr.length) return { ok: false as const, error: `有画面没生成出来:${imgErr[0]}` };
     clips[i] = { ...clips[i], shots: clean };
     reason = `你改了 ${beat} 的镜头(${clean.map((s) => (s.asset ? "素材" : TPL[s.tpl!]?.label)).join(" → ")})`;
   }
@@ -107,6 +181,7 @@ function fieldDoc(f: Field): string {
   if (f.type === "items") return `"${f.key}": [{${(f.of ?? []).map((x) => `"${x.key}"${x.optional ? "?" : ""}`).join(",")}} ${f.min}-${f.max} 个]`;
   if (f.type === "side") return `"${f.key}": {"title":≤6字,"lines":[≤10字]}`;
   if (f.type === "rows") return `"${f.key}": [[≤${f.itemMax}字]] ${f.min}-${f.max} 行`;
+  if (f.type === "hidden") return "";
   return `"${f.key}"`;
 }
 
@@ -120,7 +195,7 @@ export async function suggestShots(projectId: string, beat: string, index: numbe
   const fArt = footage?.artifacts ? JSON.parse(footage.artifacts) : {};
   const cur: Shot[] = c.shots ?? fArt.cards?.find((x: { name: string }) => x.name === beat)?.shots ?? [];
   const target = cur[index];
-  const catalogText = TEMPLATES.map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).join(";")}`).join("\n");
+  const catalogText = TEMPLATES.map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).filter(Boolean).join(";")}`).join("\n");
   const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     signal: AbortSignal.timeout(60_000),
     method: "POST",

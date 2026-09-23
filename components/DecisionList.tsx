@@ -9,6 +9,7 @@ import {
   FILL_LABELS,
   FIT_LABELS,
   THEME_LABELS,
+  IMAGE_STYLE_LABELS,
   describeOverride,
   stageLabel,
   type Decision,
@@ -97,7 +98,7 @@ export function DecisionList({
         {global.length > 0 && (
           <div className="border-b border-border/60 px-3 py-1.5">
             {global.map((d, i) =>
-              current.editable && (d.key === "sfx" || d.key === "theme") ? (
+              (current.editable || d.key === "imageStyle") && (d.key === "sfx" || d.key === "theme" || d.key === "imageStyle") ? (
                 <EditableRow key={i} d={d} projectId={projectId} />
               ) : (
                 <Row key={i} d={d} />
@@ -193,7 +194,7 @@ function EditableRow({ d, beat, projectId, tag }: { d: Decision; beat?: BeatInfo
   const [busy, setBusy] = useState(false);
   const [fromVal, setFromVal] = useState(String(d.value ?? 0));
   const key = d.key!;
-  const projectLevel = key === "sfx" || key === "theme"; // 整条片的设置,不挂在某一拍上
+  const projectLevel = key === "sfx" || key === "theme" || key === "imageStyle"; // 整条片的设置,不挂在某一拍上
   const beatKey = projectLevel ? null : (key as keyof Overrides);
   const overridden = beatKey ? beat?.overrides?.[beatKey] != null : false;
   // 刚改了、剪辑还没重出:清单里还是上一版的值,旁边写上改成了什么
@@ -222,6 +223,7 @@ function EditableRow({ d, beat, projectId, tag }: { d: Decision; beat?: BeatInfo
   else if (key === "draw") options = Object.entries(DRAW_LABELS).map(([value, label]) => ({ value, label }));
   else if (key === "sfx") options = [{ value: "on", label: "开" }, { value: "off", label: "关" }];
   else if (key === "theme") options = Object.entries(THEME_LABELS).map(([value, label]) => ({ value, label }));
+  else if (key === "imageStyle") options = Object.entries(IMAGE_STYLE_LABELS).map(([value, label]) => ({ value, label }));
 
   return (
     <div className="grid grid-cols-[4.2rem_1fr] gap-x-2 py-0.5">

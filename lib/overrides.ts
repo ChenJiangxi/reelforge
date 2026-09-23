@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { requeue } from "@/lib/rerun";
-import { CAMERA_LABELS, OVERRIDE_LABELS, THEME_LABELS, describeOverride, type EditSettings, type Overrides } from "@/lib/stages";
+import { CAMERA_LABELS, IMAGE_STYLE_LABELS, OVERRIDE_LABELS, THEME_LABELS, describeOverride, type EditSettings, type Overrides } from "@/lib/stages";
 import type { OverrideChange } from "@/lib/direct-edit";
 
 // 剪辑参数覆盖:存在脚本阶段 clips[i].overrides(跟着这一拍走,插句删句重新编号也不丢),
@@ -84,8 +84,17 @@ export async function applyProjectSettings(projectId: string, set: EditSettings,
     if (cur.theme !== set.theme) parts.push(`配色 → ${THEME_LABELS[set.theme]}`);
     cur.theme = set.theme;
   }
+  // 换生图风格:所有画面镜头要重新生图,缩略图也要重出 —— 重做素材(镜头本身沿用,只换图)
+  let redo: string[] = ["edit"];
+  if (set.imageStyle && set.imageStyle in IMAGE_STYLE_LABELS) {
+    if (cur.imageStyle !== set.imageStyle) {
+      parts.push(`配图风格 → ${IMAGE_STYLE_LABELS[set.imageStyle]}(画面镜头全部重新生图)`);
+      redo = ["footage"];
+    }
+    cur.imageStyle = set.imageStyle;
+  }
   if (!parts.length) return { ok: true, described: [] as string[], summary: "没有要改的设置。" };
   await prisma.stage.update({ where: { id: scriptStage.id }, data: { artifacts: JSON.stringify({ ...art, editSettings: cur }) } });
-  const r = await requeue(projectId, { redo: ["edit"], reason: `你改了整条片的剪辑设置(${parts.join(",")})`, announce: opts.announce });
+  const r = await requeue(projectId, { redo, reason: `你改了整条片的设置(${parts.join(",")})`, announce: opts.announce });
   return { ok: true, described: parts, summary: r.summary };
 }

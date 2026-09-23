@@ -193,7 +193,7 @@ export type Decision = {
   choice: string;
   why?: string;
   by?: "auto" | "you";
-  key?: keyof Overrides | "sfx" | "theme";
+  key?: keyof Overrides | "sfx" | "theme" | "imageStyle";
   value?: string | number;
   warn?: boolean;
 };
@@ -234,7 +234,10 @@ export type Insert = {
 };
 
 /** 整条片的剪辑设置(存在脚本阶段 artifacts.editSettings) */
-export type EditSettings = { sfx?: "on" | "off"; theme?: "ink" | "paper" | "dusk" };
+export type EditSettings = { sfx?: "on" | "off"; theme?: "ink" | "paper" | "dusk"; imageStyle?: "photo" | "ink" | "glow" };
+
+/** 画面镜头的生图风格(整条片一套) */
+export const IMAGE_STYLE_LABELS: Record<string, string> = { photo: "写实电影感", ink: "国风水墨", glow: "梦幻光影" };
 
 /** 镜头配色(整条片一套) */
 export const THEME_LABELS: Record<string, string> = { ink: "深墨蓝 + 香槟金", paper: "暖纸 + 朱红", dusk: "暗紫 + 暖橙" };

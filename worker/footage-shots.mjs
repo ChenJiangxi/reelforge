@@ -13,6 +13,7 @@ import { ffmpeg, ffmpegRaw } from "./ffmpeg.mjs";
 import { planPrompt, validatePlan, normalizeShots, describeShots, TPL_LABEL, SHOT_THEMES } from "./shots.mjs";
 import { previewBeat, shotCountFor, orderByFrom } from "../shots/timing.mjs";
 import { renderBeatStill } from "./remotion/render.mjs";
+import { sceneImage, sceneKey, dataUrl, pool, castImage } from "./images.mjs";
 import { repairDecisions } from "./validate.mjs";
 
 const OLD_THEME = { dark: "ink", gradient: "dusk", paper: "paper" };
@@ -79,6 +80,8 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
   // 2) LLM 整片一次排(看得到全片才管得住"别扎堆")
   let theme = settings.theme || prevTheme || null;
   let planned = new Map();
+  const prevCast = item.artifacts?.cast?.main || null;
+  let castDesc = prevCast?.desc || null;
   if (want.length) {
     mark(item, null, `排镜头(${want.length} 拍)`);
     const material = item.upstream?.topic?.material || item.upstream?.topic?.topic?.material || "";
@@ -87,8 +90,11 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
     const out = await chatJSON(
       planPrompt(item, want, fixedList, { assets, material, note: item.reviewNote || "", theme }),
       { temperature: 0.6, maxTokens: 9000 },
-      validatePlan(want, new Map(fixedList.map((f) => [f.name, f.shots])), source, assetNames, clips.map((c) => c.name), new Map(clips.map((c) => [c.name, c.text]))),
+      validatePlan(want, new Map(fixedList.map((f) => [f.name, f.shots])), source, assetNames, clips.map((c) => c.name), new Map(clips.map((c) => [c.name, c.text])), !!castDesc && !item.reviewNote),
     );
+    // 主角:有打回批注时可以换人;没有批注就沿用上一版的主角(免得每次重做换一张脸)
+    const nextCast = String(out.cast?.main ?? "").trim();
+    if (nextCast && (!castDesc || item.reviewNote)) castDesc = nextCast;
     decisions.push(...repairDecisions(out, "排镜头"));
     if (!settings.theme && SHOT_THEMES.includes(out.theme)) theme = out.theme;
     for (const b of out.beats || []) if (b?.name) planned.set(b.name, normalizeShots(b.shots));
@@ -96,7 +102,62 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
   theme = OLD_THEME[theme] || theme || "ink";
   decisions.push({ topic: "配色", choice: { ink: "深墨蓝 + 香槟金", paper: "暖纸 + 朱红", dusk: "暗紫 + 暖橙" }[theme] ?? theme, why: settings.theme ? "你定的" : prevTheme && !want.length ? "沿用上一版" : "按内容调性选的,全片一套" , key: "theme", value: theme, by: settings.theme ? "you" : "auto" });
 
-  // 3) 每拍:规整、查素材、出缩略图
+  // 3) 画面镜头的配图:全片一起生成(4 张并发),按描述+风格+画幅缓存,同一张不重复花钱
+  const style = settings.imageStyle || "photo";
+  const finalShots = new Map();
+  for (const c of clips) finalShots.set(c.name, fixed.get(c.name)?.shots || planned.get(c.name) || []);
+  const sceneJobs = [];
+  for (const [beat, shots] of finalShots) shots.forEach((s, k) => s.tpl === "scene" && s.p?.prompt && sceneJobs.push({ beat, k, s }));
+  const localImg = new Map(); // key → 本地路径
+  let imgNew = 0;
+  let imgCost = 0;
+  // 主角定妆照:先出这一张,后面有主角的画面都拿它当参考(同一个人)
+  let cast = null;
+  const needCast = sceneJobs.some((j) => j.s.p.who === "main");
+  if (needCast && castDesc) {
+    mark(item, null, "出主角定妆照");
+    try {
+      const r = await castImage(castDesc, { style, aspect: item.aspect, workRoot: workDir(item, "") });
+      if (!r.cached) {
+        imgNew++;
+        imgCost += Number(r.cost) || 0;
+      }
+      const src = prevCast?.key === r.key && prevCast?.src ? prevCast.src : (await upload(item.projectId, r.path, `cast-${r.key}.jpg`)).url;
+      cast = { desc: castDesc, key: r.key, src, path: r.path };
+    } catch (e) {
+      decisions.push({ topic: "主角", choice: "定妆照没生成出来,各张画面里的人可能不是同一个", why: String(e.message).slice(0, 140), warn: true });
+    }
+  }
+  if (sceneJobs.length) {
+    mark(item, null, `生成画面(${sceneJobs.length} 张)`);
+    await pool(sceneJobs, 4, async ({ beat, s }) => {
+      try {
+        const ref = s.p.who === "main" && cast ? { path: cast.path, key: cast.key } : null;
+        const r = await sceneImage(s.p.prompt, { style, aspect: item.aspect, workRoot: workDir(item, ""), ref });
+        localImg.set(r.key, r.path);
+        if (!r.cached) {
+          imgNew++;
+          imgCost += Number(r.cost) || 0;
+        }
+        if (s.p.srcKey !== r.key || !s.p.src) {
+          const up = await upload(item.projectId, r.path, `scene-${r.key}.jpg`);
+          s.p = { ...s.p, src: up.url, srcKey: r.key };
+        }
+      } catch (e) {
+        decisions.push({ beat, topic: "画面", choice: "这张图没生成出来,先用纯色底", why: String(e.message).slice(0, 140), warn: true });
+      }
+    });
+    decisions.push({ topic: "配图", choice: `${sceneJobs.length} 张画面 · 新生成 ${imgNew} 张`, why: `风格:${{ photo: "写实电影感", ink: "国风水墨", glow: "梦幻光影" }[style] ?? style}${settings.imageStyle ? "(你定的)" : "(默认)"};${imgNew ? `这次花了约 ${(imgCost || imgNew * 0.039).toFixed(2)} 美元` : "全部用的缓存"}`, key: "imageStyle", value: style, by: settings.imageStyle ? "you" : "auto" });
+  }
+  /** 渲缩略图用的镜头:画面镜头换成本地图的 data URL */
+  const forRender = (shots) =>
+    shots.map((s) => {
+      if (s.tpl !== "scene" || !s.p?.prompt) return s;
+      const path = localImg.get(sceneKey(s.p.prompt, style, item.aspect, s.p.who === "main" && cast ? cast.key : ""));
+      return path ? { ...s, p: { ...s.p, src: dataUrl(path) } } : s;
+    });
+
+  // 4) 每拍:规整、查素材、出缩略图
   const cards = [];
   const images = [];
   const tplCount = {};
@@ -106,7 +167,7 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
     const c = clips[i];
     const beat = c.name;
     const f = fixed.get(beat);
-    let shots = f?.shots || planned.get(beat) || [];
+    let shots = finalShots.get(beat) || [];
     let by = f?.by || "ai";
     let why = f?.why || (item.reviewNote ? "按你的打回批注重新排" : prevByName.get(beat) ? "台词或画面简报变了,重新排" : "这一拍第一次排");
     // 素材库里没有的素材镜头去掉(可能被删了)
@@ -145,7 +206,8 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
       if (sf) {
         mark(item, beat, "出镜头缩略图");
         const png = join(workDir(item, "cards"), `${beat}-shots.png`);
-        const props = { theme, W: size.width, H: size.height, frames: est.frames, shots: est.spans.map((sp) => ({ tpl: shots[sp.i].tpl || "lines", p: shots[sp.i].p || {}, from: sp.fromFrame, frames: sp.frames, cues: sp.cues })) };
+        const rs = forRender(shots);
+        const props = { theme, W: size.width, H: size.height, frames: est.frames, shots: est.spans.map((sp) => ({ tpl: rs[sp.i].tpl || "lines", p: rs[sp.i].p || {}, from: sp.fromFrame, frames: sp.frames, cues: sp.cues })) };
         await renderBeatStill(props, sf.frame, png, { workRoot: workDir(item, "") });
         mark(item, beat, "上传缩略图");
         img = (await upload(item.projectId, png, `shots-${beat}-${stamp()}.png`)).url;
@@ -183,9 +245,11 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
   });
   const lockedN = [...fixed.values()].filter((f) => f.by === "you").length;
   const reusedN = [...fixed.values()].filter((f) => f.by === "reuse").length;
+  if (cast) decisions.unshift({ topic: "主角", choice: cast.desc, why: `全片 ${sceneJobs.filter((j) => j.s.p.who === "main").length} 张画面里是她,都拿同一张定妆照当参考,保证是同一个人${prevCast?.key === cast.key ? "(沿用上一版)" : ""}` });
   return {
     images,
     cards,
+    cast: cast ? { main: { desc: cast.desc, key: cast.key, src: cast.src } } : prevCast ? { main: prevCast } : undefined,
     decisions,
     note: `${clips.length} 拍、${shotTotal} 个镜头(${item.aspect})。${want.length ? `这次排了 ${want.length} 拍` : "全部沿用"}${reusedN ? `,沿用 ${reusedN} 拍` : ""}${lockedN ? `,${lockedN} 拍是你改过的` : ""}。
 镜头的动画在剪辑阶段按配音逐字对时间渲;这里看的是每个镜头放什么、先后顺序。点开一拍可以直接改字、换模板、换一个。`,

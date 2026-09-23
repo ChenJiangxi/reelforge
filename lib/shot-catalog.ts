@@ -4,12 +4,14 @@ import catalog from "@/shots/catalog.json";
 export type Field = {
   key: string;
   label: string;
-  type: "text" | "number" | "select" | "list" | "items" | "side" | "rows";
+  type: "text" | "number" | "select" | "list" | "items" | "side" | "rows" | "hidden";
   max?: number;
   min?: number;
   itemMax?: number;
   optional?: boolean;
   options?: string[];
+  /** 选项的中文名 */
+  labels?: Record<string, string>;
   of?: Field[];
 };
 export type Template = { id: string; label: string; use: string; cues: string; fields: Field[]; example: Record<string, unknown> };

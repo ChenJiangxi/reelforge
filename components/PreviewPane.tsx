@@ -469,7 +469,7 @@ function StageArtifact({
 }
 
 // 分镜板的数据:素材阶段 AI 排的镜头 + 脚本阶段她改过的(她的优先)。老项目(一拍一张字卡)返回 null
-function shotBoardData(stages: StageView[]): { beats: ShotBeat[]; theme: string; themeMine: boolean } | null {
+function shotBoardData(stages: StageView[]): { beats: ShotBeat[]; theme: string; themeMine: boolean; imageStyle: string; imageStyleMine: boolean } | null {
   const footage = stages.find((s) => s.kind === "footage")?.artifacts;
   const script = stages.find((s) => s.kind === "script")?.artifacts;
   const cards = footage?.cards ?? [];
@@ -481,7 +481,13 @@ function shotBoardData(stages: StageView[]): { beats: ShotBeat[]; theme: string;
     return { name: c.name, text: sc?.text ?? c.text ?? "", image: footage?.images?.[i], shots: (mine ? sc!.shots! : c.shots) ?? [], mine };
   });
   const themeMine = !!script?.editSettings?.theme;
-  return { beats, theme: script?.editSettings?.theme ?? cards.find((c) => c.theme)?.theme ?? "ink", themeMine };
+  return {
+    beats,
+    theme: script?.editSettings?.theme ?? cards.find((c) => c.theme)?.theme ?? "ink",
+    themeMine,
+    imageStyle: script?.editSettings?.imageStyle ?? "photo",
+    imageStyleMine: !!script?.editSettings?.imageStyle,
+  };
 }
 
 // 剪辑阶段看成片时也能直接改镜头(不用回到素材那一步)

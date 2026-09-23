@@ -51,4 +51,4 @@ worker/fonts/
 worker/sfx/*.wav
 
 # 镜头渲染器的依赖(worker/remotion/setup.sh 装)
-worker/remotion/node_modules/
+worker/remotion/node_modules
