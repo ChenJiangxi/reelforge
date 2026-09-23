@@ -12,7 +12,9 @@ export async function GET(req: NextRequest) {
   let jobs = claimJobs();
   let tasks = claimTasks();
   if (!jobs.length && !tasks.length) {
-    await waitForJobs(25_000);
+    await waitForJobs(25_000, req.signal);
+    // 连接已经断了(渲染机重启/网络断):别领活,领了也送不到
+    if (req.signal.aborted) return new NextResponse(null, { status: 204 });
     jobs = claimJobs();
     tasks = claimTasks();
   }

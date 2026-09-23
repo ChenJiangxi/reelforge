@@ -64,15 +64,23 @@ export function claimJobs(max = 3) {
   return out;
 }
 
-export function waitForJobs(ms: number): Promise<void> {
+/**
+ * 挂着等新活。signal = 这条长轮询的连接:渲染机重启或网络断了,连接一断就退出等待。
+ * 不然断掉的那条还挂在这里,新活一来它先被叫醒、把活领走,回给一条死连接 ——
+ * 活就丢了,要等超时重发(2026-09-24 录产品页因此白等了 10 分钟)
+ */
+export function waitForJobs(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const done = () => {
       clearTimeout(t);
       S.waiters.delete(done);
+      signal?.removeEventListener("abort", done);
       resolve();
     };
     const t = setTimeout(done, ms);
+    if (signal?.aborted) return done();
     S.waiters.add(done);
+    signal?.addEventListener("abort", done);
   });
 }
 

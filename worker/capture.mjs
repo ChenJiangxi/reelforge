@@ -104,7 +104,7 @@ const MEASURE = `(() => {
   // 分区:加粗的短标题(报告页的卡片标题是 16px/600:总论、夫妻宫、正缘画像…),数字(分数)不算
   const sections = [];
   for (const L of leaves) {
-    if (L.fs < 16 || L.fw < 600 || L.t.length > 12 || /^[\d\s.%+\-/:分]+$/.test(L.t)) continue;
+    if (L.fs < 16 || L.fw < 600 || L.t.length > 12 || /^[\\d\\s.%+\\-/:分]+$/.test(L.t)) continue; // 这段在模板字符串里,反斜杠要写两个
     if (sections.length && sections[sections.length - 1].title === L.t) continue;
     sections.push({ title: L.t, y: L.y });
   }
