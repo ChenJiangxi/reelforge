@@ -81,6 +81,8 @@ function assetNamesOf(projectId: string) {
 }
 
 // ── 画面镜头的图:她在网页上加的/改了描述的,保存时在服务端直接生成(一张约 7 秒) ────────
+// 默认关闭:生图要花钱,她同意用哪家之后才在服务器上设 SCENE_IMAGES=on(2026-09-23 她明确说过不许擅自用 OpenRouter 生图)
+export const SCENE_ON = process.env.SCENE_IMAGES === "on";
 
 async function settingsOf(projectId: string) {
   const [project, { art }, footage] = await Promise.all([
@@ -104,6 +106,7 @@ function castRef(projectId: string, cast?: { key: string; src: string }) {
 }
 
 export async function generateScene(projectId: string, prompt: string, who?: string) {
+  if (!SCENE_ON) return { ok: false as const, error: "配图没开(生图要花钱,要先定用哪家),现在不能生成新图" };
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) return { ok: false as const, error: "服务器还没配 LLM key" };
   const text = String(prompt ?? "").trim();
@@ -131,6 +134,7 @@ export async function generateScene(projectId: string, prompt: string, who?: str
 
 /** 保存前把画面镜头的图补齐:描述改了(缓存键对不上)或还没图的,现在生成 */
 async function ensureSceneImages(projectId: string, shots: Shot[]) {
+  if (!SCENE_ON) return [];
   const { aspect, style, cast } = await settingsOf(projectId);
   const errors: string[] = [];
   await Promise.all(
@@ -195,7 +199,7 @@ export async function suggestShots(projectId: string, beat: string, index: numbe
   const fArt = footage?.artifacts ? JSON.parse(footage.artifacts) : {};
   const cur: Shot[] = c.shots ?? fArt.cards?.find((x: { name: string }) => x.name === beat)?.shots ?? [];
   const target = cur[index];
-  const catalogText = TEMPLATES.map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).filter(Boolean).join(";")}`).join("\n");
+  const catalogText = TEMPLATES.filter((t) => SCENE_ON || t.id !== "scene").map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).filter(Boolean).join(";")}`).join("\n");
   const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     signal: AbortSignal.timeout(60_000),
     method: "POST",

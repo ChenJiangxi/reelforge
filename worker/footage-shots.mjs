@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { chatJSON } from "./llm.mjs";
 import { upload, downloadCached } from "./board.mjs";
 import { ffmpeg, ffmpegRaw } from "./ffmpeg.mjs";
-import { planPrompt, validatePlan, normalizeShots, describeShots, TPL_LABEL, SHOT_THEMES } from "./shots.mjs";
+import { planPrompt, validatePlan, normalizeShots, describeShots, TPL_LABEL, SHOT_THEMES, SCENE_ON } from "./shots.mjs";
 import { previewBeat, shotCountFor, orderByFrom } from "../shots/timing.mjs";
 import { renderBeatStill } from "./remotion/render.mjs";
 import { sceneImage, sceneKey, dataUrl, pool, castImage } from "./images.mjs";
@@ -108,12 +108,17 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
   for (const c of clips) finalShots.set(c.name, fixed.get(c.name)?.shots || planned.get(c.name) || []);
   const sceneJobs = [];
   for (const [beat, shots] of finalShots) shots.forEach((s, k) => s.tpl === "scene" && s.p?.prompt && sceneJobs.push({ beat, k, s }));
+  // 配图没开(默认):不生成任何图,不花一分钱。已经有图的画面镜头照旧用它的图
+  if (!SCENE_ON && sceneJobs.length) {
+    decisions.push({ topic: "配图", choice: `配图没开,${sceneJobs.length} 个画面镜头不生成新图`, why: "生图要花钱,要你同意用哪家之后才打开(SCENE_IMAGES=on);已经有图的照旧用", warn: true });
+    sceneJobs.length = 0;
+  }
   const localImg = new Map(); // key → 本地路径
   let imgNew = 0;
   let imgCost = 0;
   // 主角定妆照:先出这一张,后面有主角的画面都拿它当参考(同一个人)
   let cast = null;
-  const needCast = sceneJobs.some((j) => j.s.p.who === "main");
+  const needCast = SCENE_ON && sceneJobs.some((j) => j.s.p.who === "main");
   if (needCast && castDesc) {
     mark(item, null, "出主角定妆照");
     try {
@@ -154,7 +159,8 @@ export async function footageShots(item, { mark, workDir, sizeFor, stamp }) {
     shots.map((s) => {
       if (s.tpl !== "scene" || !s.p?.prompt) return s;
       const path = localImg.get(sceneKey(s.p.prompt, style, item.aspect, s.p.who === "main" && cast ? cast.key : ""));
-      return path ? { ...s, p: { ...s.p, src: dataUrl(path) } } : s;
+      // 本地没有这张图就不带地址渲(渲染器去服务器取图要登录,会直接失败)
+      return path ? { ...s, p: { ...s.p, src: dataUrl(path) } } : { ...s, p: { ...s.p, src: undefined } };
     });
 
   // 4) 每拍:规整、查素材、出缩略图

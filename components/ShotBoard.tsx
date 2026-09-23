@@ -82,6 +82,13 @@ export function ShotBoard({
   const [assets, setAssets] = useState<Asset[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [sceneOn, setSceneOn] = useState(false);
+  useEffect(() => {
+    fetch("/api/features")
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((j: { sceneImages?: boolean }) => setSceneOn(!!j.sceneImages))
+      .catch(() => {});
+  }, []);
   useEffect(() => {
     fetch(`/api/project/${projectId}/assets?all=1`)
       .then((r) => (r.ok ? r.json() : []))
@@ -112,7 +119,7 @@ export function ShotBoard({
         <span className="text-muted-foreground">
           {beats.length} 拍 · {total} 个镜头 · 点一拍直接改
         </span>
-        <label className="ml-auto flex items-center gap-1.5 text-muted-foreground" title="画面镜头(AI 生成的图)用什么风格;换了会重做素材、把所有画面重新生成">
+        <label hidden={!sceneOn} className="ml-auto flex items-center gap-1.5 text-muted-foreground" title="画面镜头(AI 生成的图)用什么风格;换了会重做素材、把所有画面重新生成">
           配图
           <select
             value={imageStyle}
@@ -128,7 +135,7 @@ export function ShotBoard({
           </select>
           {imageStyleMine && <span className="text-[10px] text-accent">你定的</span>}
         </label>
-        <label className="flex items-center gap-1.5 text-muted-foreground">
+        <label className={`${sceneOn ? "" : "ml-auto "}flex items-center gap-1.5 text-muted-foreground`}>
           配色
           <select
             value={theme}
@@ -213,6 +220,7 @@ export function ShotBoard({
                 beat={cur}
                 theme={theme}
                 assets={assets}
+                sceneOn={sceneOn}
                 onDone={(m) => {
                   setMsg(m);
                   setSel(null);
@@ -233,6 +241,7 @@ function ShotEditor({
   beat,
   theme,
   assets,
+  sceneOn,
   onDone,
 }: {
   projectId: string;
@@ -240,6 +249,7 @@ function ShotEditor({
   beat: ShotBeat;
   theme: string;
   assets: Asset[];
+  sceneOn: boolean;
   onDone: (msg: string | null) => void;
 }) {
   const [draft, setDraft] = useState<Shot[]>(() => structuredClone(beat.shots));
@@ -406,7 +416,7 @@ function ShotEditor({
                       }}
                       className="rounded border border-border bg-background px-1 py-0.5 text-foreground"
                     >
-                      {TEMPLATES.map((t) => (
+                      {TEMPLATES.filter((t) => sceneOn || t.id !== "scene" || s.tpl === "scene").map((t) => (
                         <option key={t.id} value={t.id}>
                           {t.label}
                         </option>
@@ -449,14 +459,16 @@ function ShotEditor({
                       <span className="flex h-28 w-16 shrink-0 items-center justify-center rounded border border-dashed border-border text-[10px] text-muted-foreground">还没图</span>
                     )}
                     <div className="space-y-1">
+                      {!sceneOn && <p className="text-[11px] leading-snug text-accent">配图没开:这台服务器现在不生成新图(要花钱,等你定用哪家)。改描述不会换图。</p>}
                       <button
                         onClick={() => regen(k)}
+                        hidden={!sceneOn}
                         disabled={!!busy}
                         className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:border-foreground/30 hover:text-foreground disabled:opacity-40"
                       >
                         {busy === `img-${k}` ? "生成中…(约 10 秒)" : "按下面的描述重新生成"}
                       </button>
-                      <p className="text-[10px] leading-snug text-muted-foreground">改了描述不点也行,保存时会自动生成。一张约 0.3 元。</p>
+                      {sceneOn && <p className="text-[10px] leading-snug text-muted-foreground">改了描述不点也行,保存时会自动生成。一张约 0.3 元。</p>}
                     </div>
                   </div>
                 )}

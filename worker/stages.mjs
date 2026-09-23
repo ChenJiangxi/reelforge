@@ -17,7 +17,7 @@ import { validateScript, validateDelivery, validateCard, validateTopic, validate
 import { footageShots } from "./footage-shots.mjs";
 import { shotsReady, shotsVersion, renderBeat } from "./remotion/render.mjs";
 import { timeShots, spokenIndex as shotIndex } from "../shots/timing.mjs";
-import { TPL_LABEL, normalizeShots } from "./shots.mjs";
+import { TPL_LABEL, normalizeShots, SCENE_ON } from "./shots.mjs";
 import { sceneImage, sceneKey, dataUrl } from "./images.mjs";
 
 export const WORK_ROOT = process.env.WORK_DIR || join(process.cwd(), "data", "work");
@@ -1294,7 +1294,11 @@ async function renderShotsBeat(item, v, { beat, words, beatDur, segDur, W, H, fp
           const cache = join(imgDir, `${key}.jpg`);
           if (existsSync(cache)) path = cache;
           else if (s0.p.src && s0.p.srcKey === key) path = await downloadCached(s0.p.src, join(imgDir, `${key}-dl.jpg`));
-          else {
+          else if (!SCENE_ON) {
+            // 配图没开:有旧图就用旧图,没有就纯色底,绝不去生成
+            if (s0.p.src) path = await downloadCached(s0.p.src, join(imgDir, `${s0.p.srcKey || key}-dl.jpg`));
+            else decisions.push({ beat, topic: "画面", choice: "这个画面镜头没有图,先用纯色底", why: "配图没开(要你同意用哪家之后才打开)", warn: true });
+          } else {
             // 她在网页上新加/改过的画面:现在生成;有主角的带上定妆照(本地没有就从素材阶段传的那张下载)
             mark(item, beat, "生成画面");
             let ref = null;

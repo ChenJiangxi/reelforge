@@ -15,6 +15,8 @@ export const TPL = Object.fromEntries(CATALOG.map((t) => [t.id, t]));
 export const TPL_LABEL = Object.fromEntries(CATALOG.map((t) => [t.id, t.label]));
 const DATA_TPL = new Set(["number", "gauge", "bars", "timeline", "evidence", "pillars"]);
 export const SHOT_THEMES = ["ink", "paper", "dusk"];
+/** 画面镜头(AI 生图)默认关闭:要花钱,必须她同意用哪家、开了才用(2026-09-23 她明确说过不许擅自用 OpenRouter 生图) */
+export const SCENE_ON = process.env.SCENE_IMAGES === "on";
 const len = (s) => [...String(s ?? "")].length;
 const brief = (s, n = 16) => (len(s) > n ? `${[...String(s)].slice(0, n).join("")}…` : String(s ?? ""));
 
@@ -32,7 +34,7 @@ function fieldDoc(f) {
 }
 
 export function catalogText() {
-  return CATALOG.map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).filter(Boolean).join(";")}\n   例:${JSON.stringify(t.example)}`).join("\n");
+  return CATALOG.filter((t) => SCENE_ON || t.id !== "scene").map((t) => `■ ${t.id}(${t.label}):${t.use}\n   p: ${t.fields.map(fieldDoc).filter(Boolean).join(";")}\n   例:${JSON.stringify(t.example)}`).join("\n");
 }
 
 /** 这拍大概念多久(秒) */
@@ -229,7 +231,8 @@ export function validatePlan(want, fixedByName, source, assetNames = [], allOrde
         } else if (c / cards.length > 0.3) out.push(`${tpl} 用了 ${c}/${cards.length} 次,超过三成 —— 整条片会像同一个画面的变体,换几个成别的模板`);
       }
       const sceneN = count.scene || 0;
-      if (sceneN / cards.length < 0.28) out.push(`scene(画面)只有 ${sceneN}/${cards.length} 个 —— 片子不能全是字,讲情绪、场景、比喻、意象的镜头换成 scene,至少三成`);
+      if (!SCENE_ON && sceneN) out.push(`这台机器没开配图,不能用 scene(${sceneN} 个)—— 换成别的模板`);
+      if (SCENE_ON && sceneN / cards.length < 0.28) out.push(`scene(画面)只有 ${sceneN}/${cards.length} 个 —— 片子不能全是字,讲情绪、场景、比喻、意象的镜头换成 scene,至少三成`);
       const CAP = { stomp: 2, quote: 3, ask: 3, glyph: 4 };
       for (const [tpl, cap] of Object.entries(CAP)) if ((count[tpl] || 0) > cap) out.push(`${tpl} 用了 ${count[tpl]} 次,全片最多 ${cap} 次 —— 多出来的换成别的模板`);
     }
@@ -271,6 +274,15 @@ export function planPrompt(item, want, fixed, { assets = [], material = "", note
   const assetBlock = vids.length
     ? `\n\n素材库(真录屏/真截图,能用就用 —— 讲到产品功能时,真素材永远比动画卡有说服力):\n${vids.map((a) => `- "${a.name}"(${a.kind === "video" ? "录屏" : "图片"}${a.global ? ",共享" : ""}${a.tone ? `,${a.tone === "dark" ? "深色画面" : "浅色画面"}` : ""})`).join("\n")}\n用法:镜头写成 {"asset": "文件名", "from": "切点"}。一拍最多一个素材镜头,别把素材放在不相关的拍上。`
     : "";
+  const sceneRule = SCENE_ON
+    ? `7. 片子不能全是字:全片三到五成的镜头用 scene(画面)。讲情绪、场景、人物状态("谈恋爱总踩坑""上来特别上头""深夜一个人刷手机")、比喻("红线""窗口")、命理意象(星盘、日柱、五行流转)时用 scene;讲结构、关系、对照、数字时才用图表类模板。
+   scene 的 prompt 写"画什么":谁、在哪、在做什么、什么光线、什么情绪,越具体越好(例:"一对二十多岁的中国情侣在咖啡馆背对背生闷气,女生抱着手臂看向窗外,男生低头刷手机,暖色逆光");
+   一张图只画一个瞬间(不写"下一秒/然后/切到",要对比就拆成两个 scene);不写画风(全片统一加),不要求画面里出现任何文字;人物统一是中国人。scene 上最多压一句 ≤10 字的关键词(big),也可以不压。
+   主角:全片有人物的画面都是同一个主角,默认就是这条片的目标观众本人(口播对着"姐妹们"说 = 二十多岁的中国女生)。在 cast.main 里写一次她的样子(年龄、发型、穿着、气质,40 字以内),
+   画面里有她就写 who: "main",prompt 里用"她"指代,不用再描述长相;讲"对方/另一半/老师傅"这类别人时才画别人。不要画"口播者/主持人对着镜头说话" —— 这条片没有真人出镜。
+   相邻两个 scene 之间最好隔一个图表类镜头,别连着三个 scene。
+`
+    : "7. (这台机器没开配图,不要用 scene。)\n";
   const all = [...want.map((w) => ({ ...w, todo: true })), ...fixed.map((f) => ({ ...f, todo: false }))];
   all.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   const beats = all
@@ -294,17 +306,11 @@ ${catalogText()}
 硬规矩:
 1. 切点 from:每拍第一个镜头不写 from;后面每个镜头的 from 必须从这拍台词里一字不差地抄 3-8 个字,念到这几个字就切过来,按台词顺序往后排。
 2. 屏幕上的字不是字幕:字幕已经会把台词逐句打出来,画面只放提炼过的关键词、术语、关系、数字。一个字段里整句照抄台词 = 不合格。
-3. 不重样:相邻两个镜头(包括上一拍的最后一个和这一拍的第一个)不许用同一个模板;除了 scene,任何一个模板不许超过全片镜头的三成;stomp 全片最多 2 次。
+3. 不重样:相邻两个镜头(包括上一拍的最后一个和这一拍的第一个)不许用同一个模板;${SCENE_ON ? "除了 scene," : ""}任何一个模板不许超过全片镜头的三成;stomp 全片最多 2 次。
 4. 不编数据:number/gauge/bars/timeline/evidence 里的数字、pillars 里的干支,必须是台词或参考材料里真有的。没有真数字,就用 lines/glyph/diagram/compare/list 这类非数据模板。
-5. 开头:第一拍的第一个镜头用 scene(压一句狠话)/ stomp / ask / glyph / number 之一,而且 2.5 秒内要切到下一个镜头。
+5. 开头:第一拍的第一个镜头用 ${SCENE_ON ? "scene(压一句狠话)/ " : ""}stomp / ask / glyph / number 之一,而且 2.5 秒内要切到下一个镜头。
 6. 每个镜头只讲一件事。塞不下就拆成两个镜头,别往一个模板里硬塞。
-7. 片子不能全是字:全片三到五成的镜头用 scene(画面)。讲情绪、场景、人物状态("谈恋爱总踩坑""上来特别上头""深夜一个人刷手机")、比喻("红线""窗口")、命理意象(星盘、日柱、五行流转)时用 scene;讲结构、关系、对照、数字时才用图表类模板。
-   scene 的 prompt 写"画什么":谁、在哪、在做什么、什么光线、什么情绪,越具体越好(例:"一对二十多岁的中国情侣在咖啡馆背对背生闷气,女生抱着手臂看向窗外,男生低头刷手机,暖色逆光");
-   一张图只画一个瞬间(不写"下一秒/然后/切到",要对比就拆成两个 scene);不写画风(全片统一加),不要求画面里出现任何文字;人物统一是中国人。scene 上最多压一句 ≤10 字的关键词(big),也可以不压。
-   主角:全片有人物的画面都是同一个主角,默认就是这条片的目标观众本人(口播对着"姐妹们"说 = 二十多岁的中国女生)。在 cast.main 里写一次她的样子(年龄、发型、穿着、气质,40 字以内),
-   画面里有她就写 who: "main",prompt 里用"她"指代,不用再描述长相;讲"对方/另一半/老师傅"这类别人时才画别人。不要画"口播者/主持人对着镜头说话" —— 这条片没有真人出镜。
-   相邻两个 scene 之间最好隔一个图表类镜头,别连着三个 scene。
-8. 用台词里的具体词,不要自己总结的空词:"错误期待 / 真正价值 / 授人以渔 / 信息不对等 / 结尾落点"这种标签一律不要;标题、对照两边的名字直接用台词里的说法(星座合盘 vs 八字命盘、找老师傅 vs 自己排盘)。
+${sceneRule}8. 用台词里的具体词,不要自己总结的空词:"错误期待 / 真正价值 / 授人以渔 / 信息不对等 / 结尾落点"这种标签一律不要;标题、对照两边的名字直接用台词里的说法(星座合盘 vs 八字命盘、找老师傅 vs 自己排盘)。
 9. glyph 的大字必须是这拍讲的术语或关键字本身(官、杀、伤、合、冲、偏),不是随手挑一个字;quote 只给真正能截图传播的金句,全片最多 3 次,by 只写真实出处(人名/书名),通常不写;stomp 最多 2 次,ask 最多 3 次,glyph 最多 4 次。
 10. 片子里有素材镜头时,配色跟素材的明暗走(深色录屏配 ink,浅色配 paper),不然画面会在亮和暗之间来回跳。theme 选一套配色贯穿全片:ink(深墨蓝 + 香槟金,默认、严肃/揭秘/命理)、paper(暖纸 + 朱红,温暖/情感/生活)、dusk(暗紫 + 暖橙,活泼)。${theme ? `这条片之前用的是 ${theme},没有理由就别换。` : ""}
 
@@ -317,7 +323,7 @@ ${playbook("visual")}${assetBlock}`,
 ${beats}
 
 返回 JSON(不要多余文字),只返回标了"切 N 个镜头"的那些拍:
-{"theme": "ink|paper|dusk", "cast": {"main": "主角的样子"}, "beats": [{"name": "c01", "shots": [{"tpl": "scene", "p": {"prompt": "...", "who": "main", "big": "..."}}, {"tpl": "compare", "from": "女命看", "p": {...}}, {"asset": "文件名", "from": "打开灵伴"}]}]}`,
+${SCENE_ON ? '{"theme": "ink|paper|dusk", "cast": {"main": "主角的样子"}, "beats": [{"name": "c01", "shots": [{"tpl": "scene", "p": {"prompt": "...", "who": "main", "big": "..."}}, {"tpl": "compare", "from": "女命看", "p": {...}}, {"asset": "文件名", "from": "打开灵伴"}]}]}' : '{"theme": "ink|paper|dusk", "beats": [{"name": "c01", "shots": [{"tpl": "stomp", "p": {...}}, {"tpl": "compare", "from": "女命看", "p": {...}}, {"asset": "文件名", "from": "打开灵伴"}]}]}'}`,
     },
   ];
 }
