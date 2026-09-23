@@ -96,7 +96,11 @@ export function planPage(layout, p, frames, cues, geom, stage) {
   const maxScroll = Math.max(0, (layout?.cssH || vp) - vp);
   const Z = p.mode === "page" ? 1.55 : 1.85;
   // 关键帧:{f, scrollY, z, tx, ty}(tx/ty 是页面坐标里要放到画面焦点位置的点;null = 屏幕中心)
-  const keys = [{ f: 0, scrollY: 0, z: 1, tx: null, ty: null }];
+  // 开场就停在第一个要点上面一点(切进来就是要讲的那段),只轻轻往下滚一小段再推近 ——
+  // 从页面顶上一路滚到底部的要点,一两秒滚几千像素,看着像在甩
+  const first = targets[0]?.hit;
+  const y0 = first ? clamp(first.box.y + first.box.h / 2 - vp * 0.38 - vp * 0.3, 0, maxScroll) : 0;
+  const keys = [{ f: 0, scrollY: y0, z: 1, tx: null, ty: null }];
   let cur = keys[0];
   const put = (k) => {
     k.f = Math.max(Math.round(k.f), cur.f + 1);
@@ -131,6 +135,8 @@ export function planPage(layout, p, frames, cues, geom, stage) {
     put({ ...cur, f: at - 10 });
     put({ f: at + 11, scrollY: want, z: Z, tx: cx, ty: cy });
   }
+  // 开场如果要停着等(要点已经在屏幕上、不用滚),就慢慢推一点点,别有死帧
+  if (keys.length > 2 && keys[1].f > 8 && keys[1].z === 1 && Math.abs(keys[1].scrollY - keys[0].scrollY) < 2) keys[1] = { ...keys[1], z: 1.05 };
   const taps = [];
   const marks = [];
   for (const t of targets) {

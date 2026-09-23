@@ -39,8 +39,17 @@ export const PageShot: React.FC<{ p: P }> = ({ p }) => {
   const focus = toStage(fxC, t.fy);
   const screenCy = g.top + g.screenH / 2;
   const anchorY = screenCy + (H * 0.4 - screenCy) * zt;
-  const cam = (x: number, y: number) => ({ x: (x - focus.x) * t.z + W / 2, y: (y - focus.y) * t.z + anchorY });
-  const camT = `translate(${W / 2 - focus.x * t.z}px, ${anchorY - focus.y * t.z}px) scale(${t.z})`;
+  // 竖向:画面(舞台坐标里看得见的那一截)和手机屏幕,小的那个必须在大的里面 ——
+  // 推近后画面比屏幕矮,就不许拍到屏幕外(字贴着页面底部时,推近会在下半截露出一大块空底);
+  // 没推近时画面比屏幕高,这条自然满足,不改原来的构图。两种情况在交界处是连续的,不会跳
+  const visH = H / t.z;
+  const lo = g.top;
+  const hi = g.top + g.screenH - visH;
+  const vTop = Math.min(Math.max(lo, hi), Math.max(Math.min(lo, hi), focus.y - anchorY / t.z));
+  const tx = W / 2 - focus.x * t.z;
+  const ty = -vTop * t.z;
+  const cam = (x: number, y: number) => ({ x: x * t.z + tx, y: y * t.z + ty });
+  const camT = `translate(${tx}px, ${ty}px) scale(${t.z})`;
 
   // 只画看得见的切片
   const visTop = t.scrollY - 400;

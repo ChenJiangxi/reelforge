@@ -20,7 +20,8 @@ function srcHash() {
     for (const f of readdirSync(d).sort()) {
       const p = join(d, f);
       if (statSync(p).isDirectory()) walk(p);
-      else if (/\.(tsx?|json)$/.test(f)) h.update(f).update(readFileSync(p));
+      // .mjs 也要算进来:page.mjs(产品页推镜)、timing.mjs 都会打进包里,漏了它们改了不会重打、旧缓存也不作废
+      else if (/\.(tsx?|m?js|json)$/.test(f)) h.update(f).update(readFileSync(p));
     }
   };
   walk(SHOTS);
