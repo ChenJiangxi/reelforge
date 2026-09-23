@@ -474,23 +474,26 @@ export async function renderSubLine(text, { width, height }, outPath, theme = "d
     const i = String(text).indexOf(highlight);
     esc = `${escOf(String(text).slice(0, i))}<span class="hl">${escOf(highlight)}</span>${escOf(String(text).slice(i + highlight.length))}`;
   }
-  const fontSize = Math.round(height * 0.032);
-  const bottom = Math.round(height * 0.085);
-  const lightBg = theme === "paper";
-  const fg = lightBg ? "#221b12" : "#f5f1e9";
-  const stroke = lightBg ? "rgba(250,246,238,.95)" : "rgba(0,0,0,.9)";
+  // 照 ops-bilibili 她定下的字幕(2026-09-05):香槟金 #F2D9A0 + 墨蓝描边 #080D14,不许红白;
+  // 竖屏放在 y≈0.72(抖音底部 20% 被文案和按钮盖着,她否过 y=1660 太低),3:4 放在 0.79 往下,横屏 0.86
+  void theme;
+  const fontSize = Math.round(width * 0.054);
+  const ratio = height / width;
+  const centerY = Math.round(height * (ratio > 1.6 ? 0.72 : ratio > 1.1 ? 0.81 : 0.87));
+  const top = Math.round(centerY - fontSize * 0.65);
+  const strokeW = Math.max(3, Math.round(width * 0.0083));
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
 * { margin: 0; padding: 0; }
 html, body { width: ${width}px; height: ${height}px; background: transparent; overflow: hidden; }
 .line {
-  position: absolute; left: 0; right: 0; bottom: ${bottom}px; text-align: center;
-  font-family: "PingFang SC", "Hiragino Sans GB", sans-serif; font-weight: 700;
-  font-size: ${fontSize}px; color: ${fg}; letter-spacing: .02em;
-  -webkit-text-stroke: ${Math.max(2, Math.round(height * 0.004))}px ${stroke};
-  text-shadow: 0 ${Math.round(height * 0.003)}px ${Math.round(height * 0.01)}px ${lightBg ? "rgba(250,246,238,.8)" : "rgba(0,0,0,.65)"};
+  position: absolute; left: 0; right: 0; top: ${top}px; text-align: center;
+  font-family: "PingFang SC", "Heiti SC", "STHeiti", "Hiragino Sans GB", sans-serif; font-weight: 600;
+  font-size: ${fontSize}px; line-height: 1.3; color: #F2D9A0; letter-spacing: ${Math.round(width / 1080)}px;
+  -webkit-text-stroke: ${strokeW}px #080D14;
   paint-order: stroke fill;
+  text-shadow: 0 ${Math.round(width * 0.0037)}px ${Math.round(width * 0.0167)}px rgba(0,0,0,.85);
 }
-.hl { color: #FFD54A; font-weight: 800; display: inline-block; transform: scale(1.08); margin: 0 .06em; }
+.hl { color: #FFE8A8; font-weight: 800; display: inline-block; transform: scale(1.08); margin: 0 .06em; }
 </style></head><body><div class="line">${esc}</div></body></html>`;
   const b = await browser();
   const ctx = await b.newContext({ viewport: { width, height }, deviceScaleFactor: 1, locale: "zh-CN" });

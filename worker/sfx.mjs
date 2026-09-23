@@ -1,7 +1,7 @@
-// 音效层(规则学自 MuseDock html-video/sfxEventService.js,素材是它用的 Mixkit 免费音效)。
-// 它让模型挑时间点再用规则筛;我们的时间点是确定的(换拍、分步出现、手绘开笔),直接按规则放:
-//   同一拍里间隔 ≥0.6s、每拍 ≤2 个、全片 ≤ min(18, 2×拍数)、重音效之间 ≥3s、
-//   不压在一句话的开头 ±0.35s 里、人声期间再压低 8dB、音量夹在 -28…-10dB。
+// 音效层(素材是 Mixkit 免费音效)。2026-09-24 起照 ops-bilibili 她认可的做法收紧:
+//   只在章节入口放(节拍从铺垫转到论据、转折、落点的那一刀),全片最多 min(8, 1+时长/15) 个,
+//   不给每次换拍、每个元素出现配「嗖」「啵」—— 景甜基准片也只在章节入口有克制的电影感音效。
+//   重音效之间 ≥3s、不压在一句话的开头 ±0.35s 里、人声期间再压低 8dB、音量夹在 -28…-14dB(约 0.10–0.20)。
 // 这一层会改变片子的听感 —— 项目级开关在决定清单里(剪辑 → 音效 开/关)。
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -26,8 +26,8 @@ export function sfxReady() {
 }
 
 const SOUNDS = {
-  cutStrong: { id: "mixkit-whoosh-cinematic-fast", db: -18, high: true, label: "重转场「嗖」" },
-  cut: { id: "mixkit-swoosh-fast-transition", db: -26, label: "换拍轻「嗖」" },
+  cutStrong: { id: "mixkit-whoosh-cinematic-fast", db: -16, high: true, label: "转折/落点「嗖」" },
+  cut: { id: "mixkit-swoosh-fast-transition", db: -20, label: "章节入口轻「嗖」" },
   reveal: { id: "mixkit-pop-explainer-light", db: -22, label: "分步出现「啵」" },
   draw: { id: "mixkit-paper-pencil-write", db: -24, label: "手绘开笔「沙沙」" },
 };
@@ -37,7 +37,7 @@ const MAX_PER_BEAT = 2;
 const MIN_HIGH_GAP = 3;
 const AVOID_START = 0.35;
 const VOICE_DUCK = 8;
-const clampDb = (v) => Math.max(-28, Math.min(-10, v));
+const clampDb = (v) => Math.max(-28, Math.min(-14, v));
 
 /**
  * beats: [{ name, start (全片秒), dur, words, transitionIn?: {type,dur}, reveals?: [秒,相对这拍], drawn?: bool }]
@@ -63,21 +63,21 @@ export function planSfx(beats) {
   const inVoice = (t) => voiced.some(([a, e]) => t >= a - 0.05 && t <= e + 0.05);
 
   const want = [];
-  for (let i = 0; i < beats.length; i++) {
+  for (let i = 1; i < beats.length; i++) {
     const b = beats[i];
-    // 换拍:放在上一拍的句尾空隙里(切点前 0.25s),不压在下一句开头上
-    if (i > 0 && b.transitionIn) {
-      const strong = b.transitionIn.type !== "fade";
+    const prev = beats[i - 1];
+    // 章节入口:这拍的节拍类型和上一拍不同(铺垫 → 论据 → 转折 → 落点)。放在上一拍句尾的空隙里(切点前 0.25s)
+    if (b.kind && prev.kind && b.kind !== prev.kind) {
+      const strong = b.kind === "turn" || b.kind === "landing";
       want.push({ t: Math.max(0, b.start - 0.25), kind: strong ? "cutStrong" : "cut", beat: b.name, atCut: true });
     }
-    if (b.drawn) want.push({ t: b.start + 0.15, kind: "draw", beat: b.name });
-    for (const r of b.reveals || []) want.push({ t: b.start + r, kind: "reveal", beat: b.name });
   }
   want.sort((a, b) => a.t - b.t);
 
   const events = [];
   const dropped = [];
-  const cap = Math.min(18, beats.length * 2);
+  const total = beats.length ? beats[beats.length - 1].start + beats[beats.length - 1].dur : 0;
+  const cap = Math.min(8, 1 + Math.floor(total / 15));
   for (const w of want) {
     const s = SOUNDS[w.kind];
     const drop = (why) => dropped.push({ beat: w.beat, label: s.label, why });

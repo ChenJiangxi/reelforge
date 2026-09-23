@@ -84,8 +84,9 @@ export const Stomp: React.FC<{ p: { small?: string; big: string } }> = ({ p }) =
 export const Ask: React.FC<{ p: { a?: string; b: string } }> = ({ p }) => {
   const f = useF();
   const { th, stage, dur } = useShot();
-  const s1 = pop(f, 3);
-  const s2 = pop(f, p.a ? 16 : 4, { damping: 12, stiffness: 180 });
+  // 切进来就要有东西:小字立刻出,大问句 8 帧(约 0.27 秒)后落
+  const s1 = pop(f, 0);
+  const s2 = pop(f, p.a ? 8 : 2, { damping: 12, stiffness: 180 });
   const push = interpolate(f, [8, Math.max(20, dur - 1)], [1, 1.12], { easing: Easing.inOut(Easing.quad), extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   const maxW = stage.W * 0.84;
   const b = fitBlock(p.b, maxW, 132 * stage.u, 70 * stage.u, 2);

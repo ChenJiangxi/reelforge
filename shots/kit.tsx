@@ -11,7 +11,7 @@ export type Stage = {
   W: number;
   H: number;
   portrait: boolean;
-  /** 内容区:竖屏上面留 10%,下面留 17% 给字幕 */
+  /** 内容区:竖屏下面留 32%(字幕在 72% 处,再往下是抖音的按钮区) */
   top: number;
   bottom: number;
   /** 尺寸单位:9:16 下是 1,其它画幅按内容区缩放 */
@@ -37,11 +37,13 @@ export function useShot(): ShotCtx {
 
 export function stageOf(W: number, H: number): Stage {
   const portrait = H >= W;
-  // 竖屏:字幕在底部 8.5% 往上两行,内容区中心放在 ~47%,上下留白才匀
-  const top = Math.round(H * (portrait ? 0.1 : 0.08));
-  const bottom = Math.round(H * (portrait ? 0.17 : 0.18));
+  // 字幕位置照 ops-bilibili(她定的):9:16 在 y≈0.72(抖音底部 20% 被按钮和文案盖着),3:4 在 0.79 往下,横屏 0.87。
+  // 内容区停在字幕上面
+  const ratio = H / W;
+  const top = Math.round(H * (ratio > 1.6 ? 0.08 : portrait ? 0.07 : 0.08));
+  const bottom = Math.round(H * (ratio > 1.6 ? 0.32 : portrait ? 0.24 : 0.18));
   const contentH = H - top - bottom;
-  const u = portrait ? Math.min(W / 1080, contentH / 1340) : Math.min(W / 1920, contentH / 800) * 0.9;
+  const u = portrait ? Math.min(W / 1080, contentH / 1160) : Math.min(W / 1920, contentH / 800) * 0.9;
   return { W, H, portrait, top, bottom, u };
 }
 

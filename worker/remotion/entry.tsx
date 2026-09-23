@@ -2,8 +2,23 @@
 import React from "react";
 import { Composition, registerRoot } from "remotion";
 import { Beat, type BeatProps } from "../../shots/Shot";
+import { Cam, type CamProps } from "./Cam";
 
 const Root: React.FC = () => (
+  <>
+  <Composition
+    id="Cam"
+    component={Cam as unknown as React.FC<Record<string, unknown>>}
+    width={1080}
+    height={1920}
+    fps={30}
+    durationInFrames={90}
+    defaultProps={{ src: "", kind: "video", W: 1080, H: 1920, frames: 90, keys: [] } as unknown as Record<string, unknown>}
+    calculateMetadata={({ props }) => {
+      const p = props as unknown as CamProps;
+      return { width: p.W, height: p.H, durationInFrames: Math.max(1, p.frames) };
+    }}
+  />
   <Composition
     id="Beat"
     component={Beat as React.FC<Record<string, unknown>>}
@@ -18,6 +33,7 @@ const Root: React.FC = () => (
       return { width: p.W, height: p.H, durationInFrames: Math.max(1, p.frames ?? end) };
     }}
   />
+  </>
 );
 
 registerRoot(Root);

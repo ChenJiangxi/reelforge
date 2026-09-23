@@ -49,7 +49,7 @@ function fieldIssues(f, v, at) {
     if (!f.optional && !(f.min === 0)) out.push(`${at} 缺 ${f.key}(${f.label})`);
     return out;
   }
-  if (f.type === "text" && len(v) > f.max) out.push(`${at} 的 ${f.key}「${brief(v)}」${len(v)} 字,最多 ${f.max} 字 —— 删字,别写成整句台词`);
+  if (f.type === "text" && len(String(v).replace(/\s/g, "")) > f.max) out.push(`${at} 的 ${f.key}「${brief(v)}」${len(v)} 字,最多 ${f.max} 字 —— 删字,别写成整句台词`);
   if (f.type === "number" && !Number.isFinite(Number(v))) out.push(`${at} 的 ${f.key} 要是数字,现在是「${brief(v)}」`);
   if (f.type === "select" && !f.options.includes(v)) out.push(`${at} 的 ${f.key} 只能是 ${f.options.join("|")}`);
   if (f.type === "list") {
@@ -134,6 +134,8 @@ export function shotIssues(s, at, text, source) {
     if (bad >= 0) out.push(`${at} 的 rows[${bad}] 格数和列头(${s.p.cols.length} 列)不一样`);
   }
   out.push(...dataIssues(s, at, source));
+  const url = JSON.stringify({ ...s.p, src: undefined, srcKey: undefined }).match(/(https?:\/\/|www\.|[a-z0-9-]{2,}\.(com|cn|net|org|io|cc|app)(\b|\/))/i);
+  if (url) out.push(`${at} 的字里有网址「${url[0]}」—— 片内不许出网址,删掉`);
   // 屏幕上的字不是字幕:整句照抄台词没有意义(字幕已经有了)
   const onScreen = JSON.stringify({ ...s.p, prompt: undefined, src: undefined });
   const longCopy = cleanText(text).length >= 16 && cleanText(onScreen).includes(cleanText(text).slice(0, 14));
@@ -272,7 +274,7 @@ export function describeShots(shots) {
 export function planPrompt(item, want, fixed, { assets = [], material = "", note = "", theme = null } = {}) {
   const vids = assets.filter((a) => a.kind === "video" || a.kind === "image");
   const assetBlock = vids.length
-    ? `\n\n素材库(真录屏/真截图,能用就用 —— 讲到产品功能时,真素材永远比动画卡有说服力):\n${vids.map((a) => `- "${a.name}"(${a.kind === "video" ? "录屏" : "图片"}${a.global ? ",共享" : ""}${a.tone ? `,${a.tone === "dark" ? "深色画面" : "浅色画面"}` : ""})`).join("\n")}\n用法:镜头写成 {"asset": "文件名", "from": "切点"}。一拍最多一个素材镜头,别把素材放在不相关的拍上。`
+    ? `\n\n素材库(真录屏/真截图,能用就用 —— 讲到产品功能时,真素材永远比动画卡有说服力):\n${vids.map((a) => `- "${a.name}"(${a.kind === "video" ? "录屏" : "图片"}${a.global ? ",共享" : ""}${a.tone ? `,${a.tone === "dark" ? "深色画面" : "浅色画面"}` : ""})`).join("\n")}\n用法:镜头写成 {"asset": "文件名", "from": "切点"}。讲到产品、功能、报告内容的地方都用素材镜头 —— 有产品录屏的片子,真产品画面要占全片一半以上(她的规矩:「产品画面至少一半」「不是全部用 html」);别把素材放在不相关的拍上。`
     : "";
   const sceneRule = SCENE_ON
     ? `7. 片子不能全是字:全片三到五成的镜头用 scene(画面)。讲情绪、场景、人物状态("谈恋爱总踩坑""上来特别上头""深夜一个人刷手机")、比喻("红线""窗口")、命理意象(星盘、日柱、五行流转)时用 scene;讲结构、关系、对照、数字时才用图表类模板。

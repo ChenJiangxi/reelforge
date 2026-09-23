@@ -181,51 +181,27 @@ export function planFocus(regions, words, beatDur, geom) {
   return { cues: cues.filter((c) => c.until - c.t >= 1.0), notes };
 }
 
-const ease = (P) => `(if(lt(${P},0.5),4*${P}*${P}*${P},1-pow(-2*${P}+2,3)/2))`;
-
-// 关键帧 [{f, z, cx, cy}] → zoompan 的分段缓动表达式
-function piecewise(keys, pick) {
-  let expr = `${pick(keys[keys.length - 1])}`;
-  for (let i = keys.length - 2; i >= 0; i--) {
-    const a = keys[i], b = keys[i + 1];
-    const va = pick(a), vb = pick(b);
-    const span = Math.max(1, b.f - a.f);
-    const seg = Math.abs(va - vb) < 1e-6 ? `${va}` : `(${va}+(${(vb - va).toFixed(4)})*${ease(`((on-${a.f})/${span})`)})`;
-    expr = `if(lt(on,${b.f}),${seg},${expr})`;
-  }
-  return `if(lt(on,${keys[0].f}),${pick(keys[0])},${expr})`;
-}
-
 /**
- * 推镜头的 zoompan 滤镜(接在进画链后面,输入是 W×H 的画面)。
- * 推进 0.45-0.8s(窗口的 40%),停住;时间够就用 0.6s 拉回全景,不够就停在那儿到这拍结束。
+ * 同样的推镜计划,给 Remotion 的 Cam 合成用:[{f, z, cx, cy}],cx/cy 归一到 0-1。
+ * (2026-09-24 起录屏推镜不再走 zoompan:整像素取整会抖)
  */
-export function focusZoompan(cues, { W, H, fps, frames }) {
-  const keys = [{ f: 0, z: 1, cx: W / 2, cy: H / 2 }];
+export function focusCamKeys(cues, { W, H, fps, frames }) {
+  const keys = [{ f: 0, z: 1, cx: 0.5, cy: 0.5 }];
   for (const c of cues) {
     const f0 = Math.round(c.t * fps);
     const win = c.until - c.t;
     const din = Math.min(0.8, Math.max(0.45, win * 0.4));
     const f1 = Math.round((c.t + din) * fps);
-    keys.push({ f: f0, z: keys[keys.length - 1].z, cx: keys[keys.length - 1].cx, cy: keys[keys.length - 1].cy });
-    keys.push({ f: f1, z: c.zoom, cx: c.cx, cy: c.cy });
+    const last = keys[keys.length - 1];
+    keys.push({ f: f0, z: last.z, cx: last.cx, cy: last.cy });
+    keys.push({ f: f1, z: c.zoom, cx: c.cx / W, cy: c.cy / H });
     const back = c.until - (c.t + din) >= 1.2;
-    const isLast = c === cues[cues.length - 1];
-    if (back && isLast) {
+    if (back && c === cues[cues.length - 1]) {
       const fb = Math.round((c.until - 0.7) * fps);
-      keys.push({ f: fb, z: c.zoom, cx: c.cx, cy: c.cy });
-      keys.push({ f: Math.min(frames - 1, fb + Math.round(0.6 * fps)), z: 1, cx: W / 2, cy: H / 2 });
-    } else {
-      keys.push({ f: Math.round((c.until - 0.05) * fps), z: c.zoom, cx: c.cx, cy: c.cy });
-    }
+      keys.push({ f: fb, z: c.zoom, cx: c.cx / W, cy: c.cy / H });
+      keys.push({ f: Math.min(frames - 1, fb + Math.round(0.6 * fps)), z: 1, cx: 0.5, cy: 0.5 });
+    } else keys.push({ f: Math.round((c.until - 0.05) * fps), z: c.zoom, cx: c.cx / W, cy: c.cy / H });
   }
-  // 关键帧帧号必须单调
   for (let i = 1; i < keys.length; i++) keys[i].f = Math.max(keys[i].f, keys[i - 1].f + 1);
-  const S = 1.5; // 超采样:输入先放大 1.5 倍,推的时候不糊
-  const z = piecewise(keys, (k) => Number(k.z.toFixed(4)));
-  const cx = piecewise(keys, (k) => Number((k.cx * S).toFixed(1)));
-  const cy = piecewise(keys, (k) => Number((k.cy * S).toFixed(1)));
-  const x = `max(0,min(iw-iw/zoom,${cx}-iw/zoom/2))`;
-  const y = `max(0,min(ih-ih/zoom,${cy}-ih/zoom/2))`;
-  return `scale=${Math.round(W * S / 2) * 2}:${Math.round(H * S / 2) * 2}:flags=bicubic,zoompan=z='${z}':x='${x}':y='${y}':d=1:s=${W}x${H}:fps=${fps},setsar=1`;
+  return keys;
 }
