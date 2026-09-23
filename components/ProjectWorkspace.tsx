@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { ChatPanel, type ChatMessage } from "@/components/ChatPanel";
-import { PreviewPane, type ClipThumb, type StageView } from "@/components/PreviewPane";
+import { PreviewPane, type ClipThumb, type RerunRequest, type StageView } from "@/components/PreviewPane";
 import { stageLabel } from "@/lib/stages";
 
 const DOT: Record<string, string> = {
@@ -11,6 +11,14 @@ const DOT: Record<string, string> = {
   working: "bg-accent animate-pulse",
   changes_requested: "bg-destructive",
   pending: "bg-border",
+};
+
+const STATUS_TEXT: Record<string, string> = {
+  approved: "已通过",
+  awaiting_review: "待你审",
+  working: "制作中",
+  changes_requested: "打回重做中 / 没做成",
+  pending: "排队中",
 };
 
 // The whole working area: clickable pipeline stepper on top (切任何阶段进预览),
@@ -35,6 +43,13 @@ export function ProjectWorkspace({
   subs?: { text: string; start: number; end: number }[];
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 聊天里说了"重做 XX":LLM 猜的阶段只用来打开右边的重做表,她确认了才执行
+  const [rerunRequest, setRerunRequest] = useState<RerunRequest | null>(null);
+  const onSuggest = (s: { kind: string; note: string }) => {
+    const target = stages.find((x) => x.kind === s.kind);
+    if (target) setSelectedId(target.id);
+    setRerunRequest({ ...s, nonce: Date.now() });
+  };
   const awaiting = stages.find((s) => s.status === "awaiting_review");
 
   // 聊天/预览分栏宽度可拖(双击复位;拖动范围 280–560px)
@@ -66,7 +81,7 @@ export function ProjectWorkspace({
             <div key={s.id} className="flex min-w-0 flex-1 items-center last:flex-none">
               <button
                 onClick={() => setSelectedId(selected ? null : s.id)}
-                title={`${stageLabel(s.kind)} · ${s.status}`}
+                title={`${stageLabel(s.kind)} · ${STATUS_TEXT[s.status] ?? s.status}`}
                 className="group flex flex-col items-center gap-1"
               >
                 <span
@@ -97,10 +112,10 @@ export function ProjectWorkspace({
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
         <div className="order-2 min-h-0 min-w-0 lg:order-1 lg:shrink-0">
           <div className="hidden h-full lg:block" style={{ width: chatW }}>
-            <ChatPanel projectId={projectId} messages={messages} />
+            <ChatPanel projectId={projectId} messages={messages} onSuggestRedo={onSuggest} />
           </div>
           <div className="lg:hidden">
-            <ChatPanel projectId={projectId} messages={messages} />
+            <ChatPanel projectId={projectId} messages={messages} onSuggestRedo={onSuggest} />
           </div>
         </div>
         {/* 拖拽分隔条(桌面端) */}
@@ -121,6 +136,7 @@ export function ProjectWorkspace({
             selectedId={selectedId}
             onSelect={setSelectedId}
             projectId={projectId}
+            rerunRequest={rerunRequest}
           />
         </div>
       </div>

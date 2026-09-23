@@ -11,9 +11,11 @@ export type ChatMessage = { role: string; text: string; ts: number };
 export function ChatPanel({
   projectId,
   messages,
+  onSuggestRedo,
 }: {
   projectId: string;
   messages: ChatMessage[];
+  onSuggestRedo?: (s: { kind: string; note: string }) => void;
 }) {
   const router = useRouter();
   const [text, setText] = useState("");
@@ -49,7 +51,9 @@ export function ChatPanel({
         body: JSON.stringify({ text: t }),
       });
       const d = await r.json();
-      setPending((p) => [...p, { role: "agent", text: d.reply ?? "(没听懂,换个说法试试)", ts: Date.now() }]);
+      // 回复为空 = 服务端已经把说明直接写进消息流了(比如打回时列出重做了哪些),等刷新就行
+      if (d.reply !== "") setPending((p) => [...p, { role: "agent", text: d.reply ?? "(没听懂,换个说法试试)", ts: Date.now() }]);
+      if (d.suggest && onSuggestRedo) onSuggestRedo(d.suggest);
       router.refresh();
     } catch {
       setPending((p) => [...p, { role: "agent", text: "网络错误,稍后再试。", ts: Date.now() }]);
@@ -63,7 +67,7 @@ export function ChatPanel({
       <div className="border-b border-border/70 px-4 py-3">
         <div className="text-sm font-semibold">对话剪辑</div>
         <div className="mt-1 text-xs text-muted-foreground">
-          直接说:把第3句改成… / 删掉第5句 / 封面换一版
+          直接说:把第3句改成… / 删掉第5句 / c01 别裁,慢一点
         </div>
       </div>
 

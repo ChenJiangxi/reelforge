@@ -25,6 +25,11 @@ export async function GET(req: NextRequest) {
     if (!earlier.every((x) => x.status === "approved")) continue;
     const comments: Comment[] = s.comments ? JSON.parse(s.comments) : [];
     const last = comments.filter((c) => c.decision === "reject").at(-1);
+    // 停放判定交给服务端:最后一条"打回/失败"事件是失败 = worker 上次没做成,等她点重试。
+    // 以前 worker 自己猜(没批注 + note 以 FAILED 开头),阶段以前被打回过就会有旧批注,
+    // 失败之后每 15 秒重跑一次、永远停不下来。
+    const lastRF = comments.filter((c) => c.decision === "reject" || c.decision === "failed").at(-1);
+    const failed = s.status === "changes_requested" && lastRF?.decision === "failed";
     // Carry forward approved upstream artifacts the worker needs as input
     // (topic angle for script, script for voice/footage, etc.).
     const upstream: Record<string, unknown> = {};
@@ -47,7 +52,8 @@ export async function GET(req: NextRequest) {
       duration: s.project.duration,
       assets: [...listAssets(s.projectId), ...listAssets("_global").map((a) => ({ ...a, global: true }))],
       artifacts: s.artifacts ? JSON.parse(s.artifacts) : {},
-      comment: s.status === "changes_requested" ? last?.text ?? null : null,
+      comment: s.status === "changes_requested" && !failed ? last?.text ?? null : null,
+      failed,
       upstream,
     });
   }

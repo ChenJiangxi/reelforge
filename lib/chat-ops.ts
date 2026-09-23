@@ -2,8 +2,15 @@
 // The video is a sequence of 分句 clips (大字卡 + 配音), so "对话剪辑" =
 // natural-language ops on that clip list, then downstream stages regenerate.
 
+import type { Overrides } from "@/lib/stages";
+
 export type Say = { speed?: number; pitch?: number; emotion?: string; gap_after?: number };
-export type Clip = { name: string; text: string; tts?: string; say?: Say; visual?: string; asset?: string };
+export type Clip = {
+  name: string; text: string; tts?: string; say?: Say; visual?: string; asset?: string;
+  /** 画面简报被她改过几次 —— 素材阶段靠它判断"这拍的旧设计还能不能沿用"(光比台词,改画面会被忽略) */
+  visualRev?: number;
+  overrides?: Overrides;
+};
 
 export type ChatOp =
   | { action: "edit_text"; clip: string; text: string }
@@ -68,7 +75,7 @@ review 操作优先于一切普通操作——她在审,不是在下新需求。
   (她说"第1拍快一点/开头再冲一点/这句慢下来压住/这里停一下"就用它,只重出配音,画面不动)
   speed 是相对基准音色的倍率 0.82-1.25,pitch -3~3,emotion∈happy|surprised|calm|fluent|sad|angry,gap_after 是句尾留白秒数 0.05-0.6
 - {"action":"assign_asset","clip":"c03","asset":"素材文件名"} 指定某拍用素材库里的录屏/图片
-- {"action":"redo_stage","kind":"阶段","note":"具体修改指示"} 重做整个阶段(阶段∈ topic|script|footage|voice|edit|subtitles|deliver;用于"封面换一版""配音慢点""文案重写"这类整阶段的活)
+- {"action":"redo_stage","kind":"阶段","note":"具体修改指示"} 重做整个阶段(阶段∈ topic|script|footage|voice|edit|subtitles|deliver;用于"封面换一版""配音慢点""文案重写"这类整阶段的活)。不会直接执行:系统会弹出重做表让她确认是哪一步
 - {"action":"reply","text":"回复"} 不需要改片子(闲聊/提问),直接回话
 
 【铁律】回答"右边这是什么/这拍用的什么"类问题,只能基于下面给的真实画面清单回答,清单没有的就直说不知道,绝不许编。
@@ -76,7 +83,7 @@ ${awaitingBlock}
 规则:
 - 她说的"第N句"对应列表顺序(c01=第1句)。
 - 拿不准指哪句时不要瞎改,用 reply 反问。
-- 返回 JSON: {"ops":[...], "reply":"一句口语化的中文确认,说清楚要改什么、会有什么连锁(重新配音/重剪)"}`,
+- 返回 JSON: {"ops":[...], "reply":"一句口语化的中文确认,说清楚要改什么。别说会连带重出哪些阶段——系统会按依赖自己算好列给她"}`,
         },
         {
           role: "user",
@@ -103,26 +110,32 @@ ${stateCtx || "(还没有素材产物)"}
   return parsed;
 }
 
-// Apply ops to the clip list; returns new list + whether voice/footage are affected.
-export function applyOps(clips: Clip[], ops: ChatOp[]): { clips: Clip[]; voiceDirty: boolean; footageDirty: boolean } {
+// Apply ops to the clip list; returns new list + what kind of change it was.
+// textChanged = 台词变了(脚本变了,配音必重做);beatCountChanged = 拍数变了(画面必重做)。
+export function applyOps(
+  clips: Clip[],
+  ops: ChatOp[],
+): { clips: Clip[]; voiceDirty: boolean; footageDirty: boolean; textChanged: boolean; beatCountChanged: boolean } {
   const out = [...clips];
   let voiceDirty = false;
   let footageDirty = false;
+  let textChanged = false;
+  let beatCountChanged = false;
   const idx = (name: string) => out.findIndex((c) => c.name === name);
 
   for (const op of ops) {
     if (op.action === "edit_text") {
       const i = idx(op.clip);
       // 台词换了,旧的 tts(带停顿标记的那份)就作废了 —— 留着会照旧句子念
-      if (i >= 0 && op.text?.trim()) { out[i] = { ...out[i], text: op.text.trim(), tts: undefined }; voiceDirty = true; }
+      if (i >= 0 && op.text?.trim()) { out[i] = { ...out[i], text: op.text.trim(), tts: undefined }; voiceDirty = true; textChanged = true; }
     } else if (op.action === "delete_clip") {
       const i = idx(op.clip);
-      if (i >= 0) { out.splice(i, 1); voiceDirty = true; footageDirty = true; }
+      if (i >= 0) { out.splice(i, 1); voiceDirty = true; footageDirty = true; textChanged = true; beatCountChanged = true; }
     } else if (op.action === "insert_after") {
       const i = idx(op.clip);
       if (i >= 0 && op.text?.trim()) {
         out.splice(i + 1, 0, { name: "tmp", text: op.text.trim(), visual: op.visual });
-        voiceDirty = true; footageDirty = true;
+        voiceDirty = true; footageDirty = true; textChanged = true; beatCountChanged = true;
       }
     } else if (op.action === "edit_delivery") {
       const i = idx(op.clip);
@@ -132,7 +145,10 @@ export function applyOps(clips: Clip[], ops: ChatOp[]): { clips: Clip[]; voiceDi
       }
     } else if (op.action === "edit_visual") {
       const i = idx(op.clip);
-      if (i >= 0 && op.visual?.trim()) { out[i] = { ...out[i], visual: op.visual.trim() }; footageDirty = true; }
+      if (i >= 0 && op.visual?.trim()) {
+        out[i] = { ...out[i], visual: op.visual.trim(), visualRev: (out[i].visualRev ?? 0) + 1 };
+        footageDirty = true;
+      }
     } else if (op.action === "assign_asset") {
       const i = idx(op.clip);
       if (i >= 0 && op.asset?.trim()) {
@@ -142,5 +158,5 @@ export function applyOps(clips: Clip[], ops: ChatOp[]): { clips: Clip[]; voiceDi
     }
   }
   out.forEach((c, i) => { c.name = `c${String(i + 1).padStart(2, "0")}`; });
-  return { clips: out, voiceDirty, footageDirty };
+  return { clips: out, voiceDirty, footageDirty, textChanged, beatCountChanged };
 }

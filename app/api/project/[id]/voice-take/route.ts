@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { STAGE_ORDER, type Artifacts } from "@/lib/stages";
+import { type Artifacts } from "@/lib/stages";
+import { requeue } from "@/lib/rerun";
 
 // POST /api/project/[id]/voice-take { take: "a" | "b" }
 // 配音阶段出两版念法,她听完点一个。选 B = 把 B 的时间轴换成主时间轴,
@@ -58,18 +59,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
   }
 
-  // 下游重出(保留旧产物:新版渲染期间旧成片还能看)
-  const fromOrder = STAGE_ORDER.indexOf("edit");
-  for (const s of project.stages) {
-    if (s.order >= fromOrder) await prisma.stage.update({ where: { id: s.id }, data: { status: "pending" } });
-  }
-  await prisma.project.update({ where: { id }, data: { status: "producing" } });
-  await prisma.message.create({
-    data: {
-      projectId: id,
-      role: "agent",
-      text: `配音用「${art.takes[take]?.label ?? take.toUpperCase()}」这版定了,剪辑/字幕重出中,好了喊你审。`,
-    },
-  });
+  // 配音换了版本 = 配音的产物变了:剪辑/字幕/润色锁死跟着重出(旧产物保留,新版渲染期间还能看)
+  await requeue(id, { changed: ["voice"], reason: `配音用「${art.takes[take]?.label ?? take.toUpperCase()}」这版定了` });
   return NextResponse.json({ ok: true });
 }

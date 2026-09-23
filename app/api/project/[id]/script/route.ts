@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { STAGE_ORDER } from "@/lib/stages";
+import { requeue } from "@/lib/rerun";
+import type { Decision } from "@/lib/stages";
 
 // POST /api/project/[id]/script { narration } — she edits the script text
 // directly (chatcut 的"改文字就剪视频"). We re-segment HER EXACT TEXT into
@@ -63,7 +64,8 @@ ${text}`,
     clips = m ? JSON.parse(m[0]).clips : null;
   }
   // LLM 挂了也能存:整段当一拍,人工兜底
-  if (!Array.isArray(clips) || !clips.length) {
+  const segFailed = !Array.isArray(clips) || !clips.length;
+  if (segFailed) {
     clips = [{ text, beat: "hook", visual_type: "text", visual: "" }];
   }
   // LLM 偶尔把停顿标记漏进 text(字幕会念出 <#0.3#>),或者 tts 把字改了 —— 两边都兜底
@@ -72,6 +74,26 @@ ${text}`,
     if (c.tts && c.tts.replace(/<#[\d.]+#>/g, "") !== c.text) c.tts = undefined;
   }
   clips.forEach((c: { name?: string }, i: number) => { c.name = `c${String(i + 1).padStart(2, "0")}`; });
+  // 挂在拍上的剪辑参数覆盖和素材指定跟着原句走:重新切拍后,台词一字不差的那拍接着用
+  const byText = new Map(oldClips.map((c: { text: string }) => [c.text, c]));
+  const decisions: Decision[] = [
+    { topic: "来源", choice: "你亲手改的稿", why: "AI 只负责切拍和标念法,台词一个字没改" },
+    segFailed
+      ? { topic: "切拍", choice: "整段当成 1 拍", why: "AI 切拍失败了,先存下你的稿;要分拍就再存一次", warn: true }
+      : { topic: "切拍", choice: `${clips.length} 拍`, why: clips.length !== oldClips.length ? `原来 ${oldClips.length} 拍 —— 拍数变了,画面必须全部重出` : "拍数没变" },
+  ];
+  for (const c of clips as { name: string; text: string; overrides?: unknown; asset?: string; visualRev?: number }[]) {
+    const old = byText.get(c.text) as { overrides?: unknown; asset?: string; visualRev?: number } | undefined;
+    decisions.push(
+      old
+        ? { beat: c.name, topic: "这一拍", choice: "台词没变", why: "沿用原来的画面简报、念法、素材指定和剪辑参数" }
+        : { beat: c.name, topic: "这一拍", choice: "新台词", why: "画面简报和念法是 AI 按新台词补的" },
+    );
+    if (!old) continue;
+    if (old.overrides && !c.overrides) c.overrides = old.overrides;
+    if (old.asset && !c.asset) c.asset = old.asset;
+    if (old.visualRev && c.visualRev == null) c.visualRev = old.visualRev;
+  }
 
   await prisma.stage.update({
     where: { id: scriptStage.id },
@@ -81,22 +103,18 @@ ${text}`,
         ...oldArt,
         script: text,
         clips,
-        note: `你亲手改的稿(${clips.length} 拍)。画面/配音/剪辑/字幕重出中。`,
+        decisions,
+        note: `你亲手改的稿(${clips.length} 拍)。下游按依赖重出,聊天里列了重出哪些。`,
       }),
     },
   });
 
-  // downstream regenerates (voice is dirty by definition; cards may reference old lines)
-  const fromOrder = STAGE_ORDER.indexOf("footage");
-  // 连 working 中的阶段也翻回 pending:submit 的竞态守卫会作废它按旧输入产出的结果
-    for (const s of project.stages) {
-    if (s.order >= fromOrder) {
-      await prisma.stage.update({ where: { id: s.id }, data: { status: "pending" } });
-    }
-  }
-  await prisma.project.update({ where: { id }, data: { status: "producing" } });
-  await prisma.message.create({
-    data: { projectId: id, role: "agent", text: "脚本按你改的版本定稿了。画面/配音/剪辑/字幕重出中,好了喊你审。" },
+  // 她亲手改的稿 = 脚本变了:配音锁死重出,画面和文案默认重出(台词没变的拍沿用原设计);
+  // 拍数变了画面也锁死。聊天里会列出这次到底重出了哪些。
+  await requeue(id, {
+    changed: ["script"],
+    beatCountChanged: clips.length !== oldClips.length,
+    reason: `脚本按你改的版本定稿了(${clips.length} 拍${clips.length !== oldClips.length ? `,原来 ${oldClips.length} 拍` : ""})`,
   });
 
   return NextResponse.json({ ok: true });

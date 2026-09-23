@@ -5,11 +5,54 @@ import { join } from "node:path";
 import { chatJSON, reviewImage, reviewFrames } from "./llm.mjs";
 import { PROMPTS } from "./prompts.mjs";
 import { renderCard, renderCardVideo, renderSubLine, sizeFor, closeBrowser } from "./cards.mjs";
-import { ffmpeg, ffprobeDur, ffprobeInfo, ffmpegOut } from "./ffmpeg.mjs";
+import { ffmpeg, ffprobeDur, ffprobeInfo, ffmpegOut, ensureDisk } from "./ffmpeg.mjs";
 import { upload, downloadCached } from "./board.mjs";
 
-const WORK_ROOT = process.env.WORK_DIR || join(process.cwd(), "data", "work");
+export const WORK_ROOT = process.env.WORK_DIR || join(process.cwd(), "data", "work");
 const GAP = 0.18; // 两拍之间的留白(秒)。原来 0.25,叠上 TTS 自带的空白就太长了
+
+// ── 决定清单用的小工具 ──────────────────────────────────────────────
+// 每个阶段产出时同时交一份 decisions:这一步替她做了哪些决定、为什么。
+// 以前这些决定(裁掉 25% 画面、循环 2.7 圈、字幕烧在哪一版粗剪上)只存在于日志里,
+// 她只能看完成片往回猜。
+
+// 标记当前在做哪一拍、哪一步 —— 失败或超时时 index.mjs 靠它说清卡在哪
+function mark(item, beat, step) {
+  if (!item.progress) return;
+  item.progress.beat = beat || undefined;
+  item.progress.step = step || undefined;
+}
+
+// 产物 URL 上的 ?v=<毫秒时间戳> 就是它的版本 —— 清单里写明下游吃的是哪一版上游
+function vtime(url) {
+  const m = String(url || "").match(/[?&]v=(\d{12,})/);
+  if (!m) return null;
+  return new Date(Number(m[1])).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+  });
+}
+function latestV(urls) {
+  let best = null;
+  for (const u of urls || []) {
+    const m = String(u || "").match(/[?&]v=(\d{12,})/);
+    if (m && (!best || Number(m[1]) > Number(best[1]))) best = m;
+  }
+  return best ? vtime(`?v=${best[1]}`) : null;
+}
+function arLabel(w, h) {
+  if (!w || !h) return "?";
+  const g = (a, b) => (b ? g(b, a % b) : a);
+  const d = g(w, h);
+  return w / d <= 32 && h / d <= 32 ? `${w / d}:${h / d}` : (w / h).toFixed(2);
+}
+const pct = (x) => `${(x * 100).toFixed(1).replace(/\.0$/, "")}%`;
+const s1 = (x) => `${Number(x).toFixed(1)}s`;
+const CARD_TYPES = { text: "文字卡", data: "数字卡", diagram: "关系图", table: "对照表", flow: "流程图", contrast: "对比卡", step: "步骤卡", quote: "引语卡" };
+const BEAT_LABEL = { hook: "钩子", context: "铺垫", evidence: "论据", turn: "转折", landing: "落点" };
+const CAM_LABEL = { none: "不加运镜", pushIn: "推近", pushSoft: "轻推", pullOut: "拉远", panRight: "右摇", panLeft: "左摇", driftUp: "上移", hold: "几乎不动", pullSoft: "轻拉", pushMicro: "微推" };
+function speedLabel(v) {
+  return Math.abs(v - 1) < 0.02 ? "原速" : v > 1 ? `放慢 ${v.toFixed(2)}x` : `加速 ${(1 / v).toFixed(2)}x`;
+}
 
 // When she rejects a stage with a note, the note must steer the redo —
 // append it to whatever prompt the stage was going to send.
@@ -181,6 +224,7 @@ async function voiceClip(item, clip, dir, tag = "") {
 // ── stages ────────────────────────────────────────────────────────────────
 
 async function topic(item) {
+  mark(item, null, "想选题");
   const out = await chatJSON(guided(item, PROMPTS.topic(item)), { temperature: 0.8 });
   const note = [
     `角度:${out.angle}`,
@@ -197,7 +241,14 @@ async function topic(item) {
   const banned = /最|彻底|史上|百分百|绝对/.test(`${out.hook} ${(out.claims||[]).join(" ")}`) ;
   if (banned) warn.push("出现了绝对化用词(最/彻底/史上…),她审的时候重点看");
   const warnLine = warn.length ? `\n⚠ 选题自检:${warn.join(";")}` : "";
-  return { note: note + warnLine, topic: out };
+  const decisions = [
+    { topic: "目标", choice: `~${item.duration}s · ${item.aspect}`, why: "项目设置里定的,后面脚本字数按它估" },
+    { topic: "钩子", choice: `${[...String(out.hook || "")].length} 字`, why: "开头一句,决定前 3 秒留不留得住人", warn: !out.hook || out.hook.length < 6 },
+    { topic: "要讲的", choice: `${(out.claims || []).length} 条`, why: "脚本只能讲这几条,讲不到的就是没选上" },
+  ];
+  if (banned) decisions.push({ topic: "用词", choice: "有绝对化用词", why: "最/彻底/史上/百分百/绝对 —— 平台容易判违规", warn: true });
+  if (item.reviewNote) decisions.push({ topic: "批注", choice: "按你的打回批注重写", why: item.reviewNote.slice(0, 80) });
+  return { note: note + warnLine, topic: out, decisions };
 }
 
 async function script(item) {
@@ -206,17 +257,23 @@ async function script(item) {
   // Two passes: draft the coherent narration, then a chief-editor critique.
   // Learned from MuseDock: narration is one flowing piece (hook→landing),
   // segmented into beats of 1-3 sentences — never a list of one-liners.
+  mark(item, null, "写初稿");
   const draft = await chatJSON(guided(item, PROMPTS.script(item, t)), { temperature: 0.75, maxTokens: 6000 });
+  mark(item, null, "主编审稿");
   const out = await chatJSON(PROMPTS.scriptCritique(item, draft), { temperature: 0.5, maxTokens: 6000 });
   if (!Array.isArray(out.clips) || out.clips.length < 3) throw new Error("脚本 clips 太少或格式错误");
   out.clips.forEach((c, i) => { c.name = `c${String(i + 1).padStart(2, "0")}`; });
   // 停顿标记只该出现在 tts 里:漏进 text 会被念进字幕,tts 改了字就不是她的稿子了。
   // 舞台提示同理 —— LLM 爱写"(停顿)""(轻笑)"进台词,TTS 会把这三个字念出来。
+  const stripped = [];
+  const ttsDropped = [];
   for (const c of out.clips) {
-    c.text = stripStageDirections(String(c.text ?? "").replace(/<#[\d.]+#>/g, ""));
+    const raw = String(c.text ?? "").replace(/<#[\d.]+#>/g, "").trim();
+    c.text = stripStageDirections(raw);
+    if (c.text !== raw) stripped.push(c.name);
     if (c.tts) {
       c.tts = stripStageDirections(String(c.tts));
-      if (c.tts.replace(/<#[\d.]+#>/g, "") !== c.text) c.tts = undefined;
+      if (c.tts.replace(/<#[\d.]+#>/g, "") !== c.text) { c.tts = undefined; ttsDropped.push(c.name); }
     }
   }
   const narration = out.narration || out.clips.map((c) => c.text).join("\n");
@@ -227,9 +284,24 @@ async function script(item) {
   if (Math.max(...rel) - Math.min(...rel) < 0.12) swarn.push("每拍的语速几乎一样,配音会像念经");
   if (!out.clips.some((c) => /<#[\d.]+#>/.test(String(c.tts || "")))) swarn.push("全片没标一处停顿");
   if ((out.clips[0]?.text || "").length > 20) swarn.push(`第一句 ${out.clips[0].text.length} 字,开头太长抓不住人`);
+
+  const est = Math.round(chars / 4.5);
+  const decisions = [
+    { topic: "拍数", choice: `${Array.isArray(draft.clips) ? `初稿 ${draft.clips.length} 拍 → ` : ""}定稿 ${out.clips.length} 拍`, why: "初稿写完过了一遍主编审稿(连贯性、人味),拍数以定稿为准" },
+    { topic: "字数", choice: `${chars} 字 · 预估 ~${est}s`, why: `目标 ~${item.duration}s;按每秒 4.5 字粗估,配音出来才是准数`, warn: Math.abs(est - item.duration) / item.duration > 0.3 },
+    ...swarn.map((w) => ({ topic: "自检", choice: w, warn: true })),
+  ];
+  if (item.reviewNote) decisions.unshift({ topic: "批注", choice: "按你的打回批注重写", why: item.reviewNote.slice(0, 80) });
+  for (const c of out.clips) {
+    const pauses = (String(c.tts || "").match(/<#[\d.]+#>/g) || []).length;
+    decisions.push({ beat: c.name, topic: "节拍", choice: `${BEAT_LABEL[c.beat] ?? c.beat ?? "未标"} · ${c.text.length} 字${pauses ? ` · 停顿 ${pauses} 处` : ""}` });
+    if (stripped.includes(c.name)) decisions.push({ beat: c.name, topic: "清理", choice: "删掉了台词里的舞台提示", why: "像「(停顿)」这种字会被 TTS 照着念出来" });
+    if (ttsDropped.includes(c.name)) decisions.push({ beat: c.name, topic: "停顿", choice: "没用 AI 标的停顿版", why: "标停顿时改了字,按原台词念(这拍就没有句中停顿了)", warn: true });
+  }
   return {
     script: narration,
     clips: out.clips,
+    decisions,
     note: `${out.clips.length} 拍(${arc || "无节拍标注"}),约 ${chars} 字(目标 ~${item.duration}s)。连贯性/人味已经过一遍主编审稿。
 念法:${out.clips.map((c) => `${c.name} ${(Number(c.say?.speed) || 1).toFixed(2)}x${c.say?.emotion ? `/${c.say.emotion}` : ""}`).join("  ")}${swarn.length ? `\n⚠ 脚本自检:${swarn.join(";")}` : ""}`,
   };
@@ -243,29 +315,49 @@ async function footage(item) {
   const assets = item.assets || [];
   // Reuse card designs from a previous pass for clips whose text is unchanged —
   // chat edits usually touch one line; regenerating all designs is waste.
-  const prevByName = new Map(
-    (item.artifacts?.cards || []).map((c) => [c.name, c]),
-  );
+  // 先按拍名找,找不到再按台词找:插一句/删一句之后后面的拍会整体改名。
+  const prevCards = item.artifacts?.cards || [];
+  const prevImages = item.artifacts?.images || [];
+  const prevByName = new Map(prevCards.map((c, i) => [c.name, { ...c, _img: prevImages[i] }]));
+  const prevByText = new Map(prevCards.map((c, i) => [c.text, { ...c, _img: prevImages[i] }]));
   const images = [];
   const cards = [];
+  const decisions = [];
+  if (item.reviewNote) decisions.push({ topic: "批注", choice: "每一拍都按你的批注重新设计", why: item.reviewNote.slice(0, 80) });
   for (let i = 0; i < clips.length; i++) {
     const clip = clips[i];
-    const prev = prevByName.get(clip.name);
+    const beat = clip.name;
+    const named = prevByName.get(clip.name);
+    const prev = named && named.text === clip.text ? named : prevByText.get(clip.text) || named;
+    // 画面简报被她改过(visualRev 变了)就不许沿用 —— 以前只比台词,「只改画面」会被默默忽略
+    const sameVisual = !!prev && (prev.visualRev ?? 0) === (clip.visualRev ?? 0);
     // 素材优先:聊天指定的(clip.asset)> LLM 挑的 > 字卡
     let assetName = clip.asset || null;
+    let assetBy = clip.asset ? "you" : null;
     let content = null;
     let freshDesign = false;
+    let reused = false;
+    let why = "";
     if (!assetName) {
-      if (prev && !item.reviewNote && prev.text === clip.text && (prev.big || prev.asset)) {
-        if (prev.asset) assetName = prev.asset;
+      if (prev && !item.reviewNote && prev.text === clip.text && sameVisual && (prev.big || prev.asset)) {
+        if (prev.asset) { assetName = prev.asset; assetBy = "reuse"; }
         else content = { type: prev.type, kicker: prev.kicker, big: prev.big, sub: prev.sub, foot: prev.foot, big2: prev.big2, step_no: prev.step_no };
+        reused = true;
+        why = "台词和画面简报都没变,沿用上一版的设计";
         console.log(`  [footage] ${clip.name} reuse ${assetName ? "asset " + assetName : "design"}`);
       } else {
+        why = item.reviewNote ? "按你的打回批注重新设计"
+          : !prev ? "这一拍第一次做"
+          : prev.text !== clip.text ? "台词变了,重新设计"
+          : !sameVisual ? "你改了画面简报,重新设计"
+          : "上一版没有能沿用的设计";
+        mark(item, beat, "设计画面");
         console.log(`  [footage] ${clip.name} designing…`);
         content = await chatJSON(guided(item, PROMPTS.card(item, clip, i, clips.length)), { temperature: 0.6 });
         freshDesign = true;
         if (content.asset && assets.some((a) => a.name === content.asset)) {
           assetName = content.asset;
+          assetBy = "ai";
           content = null;
           freshDesign = false;
         }
@@ -274,22 +366,46 @@ async function footage(item) {
 
     if (assetName) {
       const asset = assets.find((a) => a.name === assetName);
-      if (!asset) throw new Error(`素材 ${assetName} 不在项目素材库`);
+      if (!asset) throw new Error(`素材「${assetName}」不在素材库里(可能被删了),换一个或把这拍的指定去掉`);
       let posterUrl = asset.url;
       if (asset.kind === "video") {
-        // poster frame so the cards grid / timeline has something to show
-        const local = await downloadCached(asset.url, join(workDir(item, "assets"), asset.name));
-        const poster = join(dir, `${clip.name}-poster.png`);
-        const pInfo = await ffprobeInfo(local);
-        const pvs = (pInfo.streams || []).find((st) => st.codec_type === "video") || {};
-        // 预览图走和成片同一套进画规则,免得网页上看着好好的、片子里被裁了
-        await ffmpeg(["-ss", "0.5", "-i", local, "-frames:v", "1", "-vf", fitChain(size.width, size.height, pvs.width, pvs.height).chain, poster]);
-        const up = await upload(item.projectId, poster, `asset-${clip.name}-poster.png`);
-        posterUrl = up.url;
+        if (prev && prev.asset === assetName && prev.name === clip.name && prev._img) {
+          posterUrl = prev._img; // 同一拍、同一个素材:封面帧不用重截重传
+        } else {
+          mark(item, beat, "截素材封面帧");
+          // poster frame so the cards grid / timeline has something to show
+          const local = await downloadCached(asset.url, join(workDir(item, "assets"), asset.name));
+          const poster = join(dir, `${clip.name}-poster.png`);
+          const pInfo = await ffprobeInfo(local);
+          const pvs = (pInfo.streams || []).find((st) => st.codec_type === "video") || {};
+          // 预览图走和成片同一套进画规则,免得网页上看着好好的、片子里被裁了
+          await ffmpeg(["-ss", "0.5", "-i", local, "-frames:v", "1", "-vf", fitChain(size.width, size.height, pvs.width, pvs.height, clip.overrides?.fit).chain, poster]);
+          mark(item, beat, "上传素材封面帧");
+          const up = await upload(item.projectId, poster, `asset-${clip.name}-poster.png`);
+          posterUrl = up.url;
+        }
       }
       console.log(`  [footage] ${clip.name} uses asset ${assetName}`);
       images.push(posterUrl);
-      cards.push({ name: clip.name, text: clip.text, asset: assetName });
+      cards.push({ name: clip.name, text: clip.text, asset: assetName, visualRev: clip.visualRev });
+      decisions.push({
+        beat,
+        topic: "画面",
+        choice: `${asset.kind === "video" ? "录屏" : "图片"}「${assetName}」`,
+        by: assetBy === "you" ? "you" : "auto",
+        why: assetBy === "you" ? "你指定的(聊天或拖拽)" : assetBy === "ai" ? "AI 设计这拍时判断用你的素材比设计卡合适" : "上一版就用的这个素材,台词没变",
+      });
+      continue;
+    }
+
+    // 沿用的设计、同一个拍名、上一版的图和动画都在:直接用,不重渲不重传。
+    // (拍名不同不能这么做:card-cXX 文件会被这次在 cXX 上新做的卡覆盖,旧 URL 指到的就不是它了)
+    if (reused && prev.name === clip.name && prev.anim && prev._img) {
+      const { _img, ...keep } = prev;
+      images.push(_img);
+      cards.push({ ...keep, name: clip.name, text: clip.text, visualRev: clip.visualRev });
+      decisions.push({ beat, topic: "画面", choice: `${CARD_TYPES[prev.type] ?? prev.type ?? "设计卡"}(沿用)`, why: `${why};没有重新渲染` });
+      console.log(`  [footage] ${clip.name} reuse render as-is`);
       continue;
     }
 
@@ -299,18 +415,23 @@ async function footage(item) {
     let passes = freshDesign ? 2 : 1;
     let lastIssues = [];
     let layoutIssues = [];
+    const rejected = [];
     for (let pass = 1; pass <= passes; pass++) {
+      mark(item, beat, pass === 1 ? "渲染画面卡" : "按审稿意见重渲");
       const rendered = await renderCard(content, size, png);
       layoutIssues = rendered.layout || [];
       if (!freshDesign) break;
       // 排版毛病在浏览器里量出来了,视觉模型只管好不好看(它数不准像素)
+      mark(item, beat, "视觉审稿");
       const qa = await reviewImage(
         png,
         `审这张短视频画面卡(口播:"${clip.text}")。清单:1)第一眼是否落在主信息上 2)有没有错别字/多字漏字 3)卡内容和口播是否相关 4)信息量:如果这卡只有一句短话的大字、而这拍讲的是知识/关系/对比内容,就是不达标(该用关系图/对照表/步骤链)。排版溢出不用你管,已经量过了。`,
       );
       const issues = [...layoutIssues, ...(qa.ok ? [] : qa.issues || [])];
       if (!issues.length || pass === passes) { lastIssues = issues; break; }
+      rejected.push(...issues);
       console.log(`  [footage] ${clip.name} 打回:${issues.join(";")} → 重设计`);
+      mark(item, beat, "按审稿意见重设计");
       content = await chatJSON(
         [...PROMPTS.card(item, clip, i, clips.length), { role: "user", content: `上一版被打回:${issues.join(";")}。针对问题改(文字太长就删字,别指望缩字号),返回同样结构的 JSON。` }],
         { temperature: 0.4 },
@@ -320,23 +441,32 @@ async function footage(item) {
     // 硬闸:知识/关系/对比内容不许落在纯文字卡(开头钩子问句除外)
     const isHook = (clip.beat || "") === "hook" || i === 0;
     const infoIssue = lastIssues.some((x) => /信息量|大字|结构/.test(String(x)));
+    let forced = false;
     if (freshDesign && content && content.type === "text" && infoIssue && !isHook) {
       console.log(`  [footage] ${clip.name} 硬闸:知识内容仍是 text 卡 → 强制结构化`);
+      mark(item, beat, "强制换结构化卡");
       content = await chatJSON(
         [...PROMPTS.card(item, clip, i, clips.length), { role: "user", content: `两版了还是纯文字大字卡,不合格。禁止用 text,必须从 diagram / table / flow 里选一种,把这拍的关系/对照/流程画出来。返回同样结构的 JSON。` }],
         { temperature: 0.3 },
       );
       if (content.type === "text") content.type = "diagram";
       layoutIssues = (await renderCard(content, size, png)).layout || [];
+      forced = true;
     }
+    decisions.push({ beat, topic: "画面", choice: `${reused ? "" : "新设计 · "}${CARD_TYPES[content.type] ?? content.type ?? "文字卡"}${reused ? "(沿用,重新渲染)" : ""}`, why });
+    if (rejected.length) decisions.push({ beat, topic: "审稿", choice: "视觉审稿打回 1 次,改过一版", why: rejected.join(";").slice(0, 140) });
+    if (forced) decisions.push({ beat, topic: "审稿", choice: `强制换成${CARD_TYPES[content.type] ?? content.type}`, why: "两版都还是纯文字大字卡,而这拍讲的是知识内容", warn: true });
+    if (layoutIssues.length) decisions.push({ beat, topic: "排版", choice: "还有排版问题没修掉", why: layoutIssues.join(";"), warn: true });
     console.log(`  [footage] ${clip.name} rendered, animating…`);
+    mark(item, beat, "做入场动画");
     const webm = join(dir, `${clip.name}.webm`);
     await renderCardVideo(content, size, 12, webm);
+    mark(item, beat, "上传画面卡");
     const { url } = await upload(item.projectId, png, `card-${clip.name}.png`);
     const { url: animUrl } = await upload(item.projectId, webm, `card-${clip.name}.webm`);
     console.log(`  [footage] ${clip.name} rendered+animated, uploaded`);
     images.push(url);
-    cards.push({ name: clip.name, text: clip.text, anim: animUrl, layout: layoutIssues.length ? layoutIssues : undefined, ...content });
+    cards.push({ name: clip.name, text: clip.text, anim: animUrl, visualRev: clip.visualRev, layout: layoutIssues.length ? layoutIssues : undefined, ...content });
   }
   await closeBrowser();
   const assetCount = cards.filter((c) => c.asset).length;
@@ -352,9 +482,14 @@ async function footage(item) {
   }
   const adjacent = designed.filter((c, i) => i > 0 && (c.type || "text") === (designed[i - 1].type || "text"));
   if (adjacent.length) sameness.push(`${adjacent.map((c) => c.name).join("/")} 和上一拍同型`);
+  decisions.unshift(
+    { topic: "构成", choice: `${designed.length} 张设计卡 · ${assetCount} 拍你的素材`, why: `卡型:${[...kinds].map((k) => CARD_TYPES[k] ?? k).join("、") || "无"}` },
+    ...sameness.map((w) => ({ topic: "雷同", choice: w, warn: true })),
+  );
   return {
     images,
     cards,
+    decisions,
     note: `${images.length} 拍画面(${item.aspect})${assetCount ? `,其中 ${assetCount} 拍用了你的真素材` : ""}。卡型:${designed.map((c) => `${c.name} ${c.type || "text"}`).join("  ")}
 画面和台词是否对得上,请审。${
       cards.filter((c) => c.layout?.length).length
@@ -372,25 +507,34 @@ async function withDelivery(item, clips) {
   // every() 判定为"不缺",这一拍就带着 say=undefined 流进 smoothPitch/capPitchRange,
   // 两边都直接读 c.say.pitch,当场崩掉整个配音阶段。改成 some():只要有一拍缺,就补。
   const missing = clips.some((c) => !c.say);
-  if (!missing && !item.reviewNote) return clips;
+  const info = { asked: false, failed: false, defaulted: [], dropped: [], missing: clips.filter((c) => !c.say).map((c) => c.name) };
+  if (!missing && !item.reviewNote) return { clips, info };
   console.log(`  [voice] ${missing ? "有拍没标念法" : "按打回批注重标念法"},让 LLM 标一遍(不改台词)`);
+  info.asked = true;
   let out;
   try {
+    mark(item, null, "补标念法");
     out = await chatJSON(guided(item, PROMPTS.delivery(item, clips)), { temperature: 0.5, maxTokens: 3000 });
   } catch (e) {
     console.log(`  [voice] 标念法失败(${e.message?.slice(0, 80)}),缺的那几拍给默认念法兜底`);
     out = null;
+    info.failed = true;
   }
   const byName = new Map((out?.clips || []).map((c) => [c.name, c]));
-  return clips.map((c) => {
+  const next = clips.map((c) => {
     const d = byName.get(c.name);
     // 兜底:LLM 没标这拍(没返回/漏了名字/整个调用失败)、且这拍本来就没 say,
     // 给一个空对象而不是留 undefined —— 下游全靠 say.xxx 这样直接取值,
     // undefined 会让整个配音阶段崩掉,空对象走 delivery() 的默认值就没事。
-    if (!d) return c.say ? c : { ...c, say: {} };
+    if (!d) {
+      if (!c.say) info.defaulted.push(c.name);
+      return c.say ? c : { ...c, say: {} };
+    }
     const tts = typeof d.tts === "string" && d.tts.replace(/<#[\d.]+#>/g, "") === c.text ? d.tts : undefined;
+    if (typeof d.tts === "string" && !tts) info.dropped.push(c.name);
     return { ...c, tts: tts ?? c.tts, say: d.say || c.say || {} };
   });
+  return { clips: next, info };
 }
 
 // B 版 = 同一份稿子"再冲一点"的念法:整体快一档、亮一档、留白短一档。
@@ -526,10 +670,12 @@ async function voice(item) {
   // 这两样还是按拍设计的,决定节奏起伏。speed/pitch/emotion 三个字段现在只是
   // 历史遗留(界面/日志里还会显示),真正合成用的是下面统一的 TAKE_BASE_SAY,
   // 原因见 synthesizeWholeTake 的注释。
-  const staged = await withDelivery(item, clips);
+  const { clips: staged, info } = await withDelivery(item, clips);
 
   // 出两版让她挑。配音是这条片里最难用规则定死的一步,给两个方向让她听完点一个。
+  mark(item, null, "合成 A 版(稳一点)");
   const takeA = await renderTake(item, staged, dir, "", "voice-preview", TAKE_BASE_SAY);
+  mark(item, null, "合成 B 版(冲一点)");
   const takeB = await renderTake(item, staged, dir, "-b", "voice-preview-b", punchier(TAKE_BASE_SAY));
 
   const meta = takeA.meta;
@@ -547,6 +693,27 @@ async function voice(item) {
   const pick = ({ name, beat, text, tts, dur, gap, say, words, head }) => ({ name, beat, text, tts, dur, gap, say, words, head });
   const sayA = delivery(profile, TAKE_BASE_SAY);
   const sayB = delivery(profile, punchier(TAKE_BASE_SAY));
+  const chars = staged.reduce((n, c) => n + [...String(c.text || "")].length, 0);
+  const decisions = [
+    { topic: "音色", choice: profile.voice_id, why: `项目设置里选的音色(${TTS_MODEL})` },
+    { topic: "合成方式", choice: `整条稿一次合成(${chars} 字)`, why: "分拍单独合成时每次调用音色都会漂(实测最大跳 4 个半音),MiniMax 没有跨调用保持音色的办法" },
+    {
+      topic: "念法",
+      choice: `A ${sayA.speed.toFixed(2)}x ${sayA.emotion ?? "auto"} · B ${sayB.speed.toFixed(2)}x ${sayB.emotion ?? "auto"}`,
+      why: "一次合成只能用一套语速/音高/情绪:脚本里每拍标的这三项这次不生效,起伏靠句中停顿和句尾留白",
+    },
+    { topic: "总长", choice: `A ${takeA.total.toFixed(1)}s · B ${takeB.total.toFixed(1)}s`, why: `目标 ~${item.duration}s`, warn: dev > 0.3 },
+  ];
+  if (item.reviewNote) decisions.unshift({ topic: "批注", choice: "按你的批注重标了停顿和留白", why: item.reviewNote.slice(0, 80) });
+  if (info.failed) decisions.push({ topic: "念法", choice: "AI 补标念法失败", why: `缺念法的 ${info.missing.join("/")} 用了默认停顿和留白`, warn: true });
+  for (const m of meta) {
+    const pauses = (String(m.tts || "").match(/<#[\d.]+#>/g) || []).length;
+    decisions.push({ beat: m.name, topic: "时长", choice: `${m.dur.toFixed(1)}s + 句尾留白 ${Number(m.gap).toFixed(2)}s${pauses ? ` · 句中停顿 ${pauses} 处` : ""}` });
+    if (info.defaulted.includes(m.name)) decisions.push({ beat: m.name, topic: "念法", choice: "用了默认留白", why: "脚本没标这拍的念法,AI 补标时也漏了它" });
+    if (info.dropped.includes(m.name)) decisions.push({ beat: m.name, topic: "停顿", choice: "没用 AI 标的停顿版", why: "AI 标停顿时改了字,按原台词念", warn: true });
+    if (!m.words?.length) decisions.push({ beat: m.name, topic: "切分", choice: "这拍没分到字", why: "整段音频按字切回每拍时没对上,剪辑和字幕会错位,建议打回重出", warn: true });
+    else if (m.dur > 20) decisions.push({ beat: m.name, topic: "切分", choice: `这拍 ${m.dur.toFixed(1)}s,偏长`, why: "切点可能不准", warn: true });
+  }
   return {
     audio: takeA.url,
     wave: takeA.waveUrl,
@@ -560,6 +727,7 @@ async function voice(item) {
       picked: "a",
     },
     voiceMetaAlt: { clips: takeB.meta.map(pick), gap: GAP, tag: "-b" },
+    decisions,
     note: `音色 ${profile.voice_id}(${TTS_MODEL})。整条片一次生成,不再分拍单独调用 ——
 MiniMax 不支持一次调用里逐句变语气,分开调用之间又没有保持音色一致的机制,
 拆开合成会漏出接缝(2026-09-15 实测最大跳变 4+ 个半音)。现在的代价是没有
@@ -579,22 +747,38 @@ async function ensureInputs(item) {
   const cardsMeta = up.footage?.cards || [];
   const images = up.footage?.images || [];
   const assets = item.assets || [];
+  const scriptClips = up.script?.clips || [];
+
+  // 拍数对不上时直接说清是哪几拍多了/少了,而不是渲到一半 ffmpeg 报错
+  const vNames = cardsMeta.map((c) => c.name);
+  const aNames = (meta || []).map((m) => m.name);
+  if (vNames.length !== aNames.length) {
+    const onlyV = vNames.filter((n) => !aNames.includes(n));
+    const onlyA = aNames.filter((n) => !vNames.includes(n));
+    throw new Error(
+      `画面 ${vNames.length} 拍、配音 ${aNames.length} 拍,对不上` +
+      `${onlyV.length ? `(只有画面:${onlyV.join("/")})` : ""}${onlyA.length ? `(只有配音:${onlyA.join("/")})` : ""}` +
+      "。通常是改了拍数,但素材或配音没跟着重出 —— 把拍数不对的那一步重做一下",
+    );
+  }
 
   // per-clip visual source: 真素材(录屏/图片) > 字卡
   const visuals = [];
   for (let i = 0; i < cardsMeta.length; i++) {
     const cm = cardsMeta[i];
+    mark(item, cm.name, "下载画面");
+    const overrides = scriptClips.find((c) => c.name === cm.name)?.overrides || {};
     if (cm.anim) {
       const p = await downloadCached(cm.anim, join(cardsDir, `${cm.name}.webm`));
-      visuals.push({ kind: "anim", path: p });
+      visuals.push({ kind: "anim", source: "anim", path: p, overrides });
     } else if (cm.asset) {
       const asset = assets.find((a) => a.name === cm.asset);
-      if (!asset) throw new Error(`素材 ${cm.asset} 不在项目素材库`);
+      if (!asset) throw new Error(`素材「${cm.asset}」不在素材库里(可能被删了)`);
       const p = await downloadCached(asset.url, join(assetsDir, cm.asset));
-      visuals.push({ kind: asset.kind, path: p });
+      visuals.push({ kind: asset.kind, source: asset.kind === "video" ? "asset-video" : "asset-image", asset: cm.asset, path: p, overrides });
     } else {
       const p = images[i] ? await downloadCached(images[i], join(cardsDir, `${cm.name}.png`)) : join(cardsDir, `${cm.name}.png`);
-      visuals.push({ kind: "image", path: p });
+      visuals.push({ kind: "image", source: "card", type: cm.type, path: p, overrides });
     }
   }
   // voiceMeta.tag 标出这一版用的文件后缀(A 版 "",B 版 "-b")—— 整段一次合成之后,
@@ -603,15 +787,18 @@ async function ensureInputs(item) {
   // 兜底出来的这一拍音色会和其它拍略有差异(独立调用没有连续性保证),但好过整段崩掉。
   const tag = up.voice?.voiceMeta?.tag ?? "";
   const voices = [];
+  const patched = [];
   for (const m of meta || []) {
     const p = join(voiceDir, `${m.name}${tag}.mp3`);
     if (!existsSync(p)) {
+      mark(item, m.name, "补合成丢失的配音");
       console.log(`  [edit] ${m.name}${tag} 的配音文件丢了,单独补一拍兜底(音色可能和其它拍有细微差异)`);
       await voiceClip(item, { ...m, say: sayToInput(m.say) }, voiceDir, tag);
+      patched.push(m.name);
     }
     voices.push(p);
   }
-  return { visuals, voices, meta };
+  return { visuals, voices, meta, patched };
 }
 
 // ── 运镜:每拍不能都是同一个缓慢推近 ──────────────────────────────────
@@ -666,10 +853,14 @@ function planTransitions(meta) {
     const beat = meta[i].beat;
     const want = STRONG_CUTS[beat];
     if (want && strong < MAX_STRONG_CUTS) {
-      out.push({ ...want, into: meta[i].name });
       strong += 1;
+      out.push({ ...want, into: meta[i].name, why: `这拍是「${BEAT_LABEL[beat] ?? beat}」,叙事拐弯;全片最多 ${MAX_STRONG_CUTS} 个重转场,这是第 ${strong} 个` });
     } else {
-      out.push({ ...SOFT_CUT, into: meta[i].name });
+      out.push({
+        ...SOFT_CUT,
+        into: meta[i].name,
+        why: want ? `想给重转场,但全片 ${MAX_STRONG_CUTS} 个名额已经用完` : "普通衔接一律短交叉淡化,转场太多本身就是噪音",
+      });
     }
   }
   return out;
@@ -691,12 +882,29 @@ function evenPx(n) {
   return Math.max(2, Math.round(n / 2) * 2);
 }
 
-// 返回一段可以直接接在 -vf 里的滤镜(含标签分支),外加一句人话说明用了哪种进画方式。
-function fitChain(W, H, srcW, srcH) {
+// 返回一段可以直接接在 -vf 里的滤镜(含标签分支),外加这次用了哪种进画方式、为什么。
+// force = 她的参数覆盖(contain / cover),不给就按宽高比自动选。
+function fitChain(W, H, srcW, srcH, force) {
   const tAR = W / H;
   const sAR = srcW && srcH ? srcW / srcH : tAR;
-  if (Math.abs(sAR - tAR) / tAR <= FIT_TOLERANCE) {
-    return { chain: `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1`, mode: "铺满裁切" };
+  const diff = Math.abs(sAR - tAR) / tAR;
+  // 铺满要裁掉多少:素材更宽 → 裁左右;素材更高 → 裁上下
+  const cut = sAR > tAR ? 1 - tAR / sAR : 1 - sAR / tAR;
+  const side = sAR > tAR ? "左右" : "上下";
+  const dims = `素材 ${srcW || "?"}×${srcH || "?"}(${arLabel(srcW, srcH)})→ 画面 ${W}×${H}(${arLabel(W, H)})`;
+  const fit = force === "cover" || force === "contain" ? force : diff <= FIT_TOLERANCE ? "cover" : "contain";
+  let why;
+  if (diff < 0.005) why = `${dims},比例一致,直接铺满`;
+  else if (fit === "cover") why = `${dims},铺满会裁掉${side}各 ${pct(cut / 2)}${force ? "" : `;比例只差 ${pct(diff)},裁的是边角`}`;
+  else why = `${dims},比例差 ${pct(diff)},铺满会裁掉${side}各 ${pct(cut / 2)};所以整幅放进去,空出来的地方垫它自己的模糊放大版`;
+  if (fit === "cover") {
+    return {
+      chain: `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1`,
+      mode: "铺满裁切",
+      fit,
+      why,
+      warn: cut > 0.1,
+    };
   }
   const bw = evenPx(W / 4), bh = evenPx(H / 4); // 先缩小再模糊再放大,比直接糊 1080p 快一个量级
   const fw = evenPx(W * 0.94), fh = evenPx(H * 0.94); // 留一点内缩,模糊底才像是设计过的
@@ -709,55 +917,123 @@ function fitChain(W, H, srcW, srcH) {
       `[fg]scale=${fw}:${fh}:force_original_aspect_ratio=decrease,setsar=1[fgs];` +
       "[bgb][fgs]overlay=(W-w)/2:(H-h)/2",
     mode: "整幅放进去+模糊底",
+    fit,
+    why,
+    warn: false,
   };
 }
 
-// 把一段素材视频(或动画卡 webm)渲成正好 segDur 长的一拍。
+// 把一段素材视频(或动画卡 webm)渲成正好 segDur 长的一拍,返回这一拍的决定清单。
 // setsar=1 是关键:素材如果带着非方形像素的 SAR/DAR 元数据(实见她的一个上传素材),
 // scale+crop 完全不会清掉这个标签,原样传到成片,变成"编码 1080x1920、播放器按
 // 5040x1920 显示"——横向被拉成宽屏。
-export async function renderAssetSeg(src, out, { W, H, fps, segDur, move = null, frames = 0, still = false }) {
+// ov = 她挂在这一拍上的参数覆盖:fit / slow / fill / from / camera。
+export async function renderAssetSeg(src, out, { W, H, fps, segDur, move = null, frames = 0, still = false, ov = {}, beat } = {}) {
   const info = await ffprobeInfo(src);
   const vs = (info.streams || []).find((s) => s.codec_type === "video") || {};
-  const srcDur = parseFloat(info.format?.duration) || 0;
-  const { chain, mode } = fitChain(W, H, vs.width, vs.height);
-  const notes = [mode];
+  const rawDur = parseFloat(info.format?.duration) || 0;
+  const you = (k) => ov[k] != null;
+  const decisions = [];
 
+  // 起点:她说"从第 2 秒开始"—— 先切出一段,后面放慢/接龙/循环都在切好的这段上做
   let input = src;
+  const from = !still && ov.from ? Math.min(Number(ov.from), Math.max(0, rawDur - 0.5)) : 0;
+  if (from > 0) {
+    input = out.replace(/\.mp4$/, "-from.mp4");
+    await ffmpeg(["-ss", from.toFixed(3), "-i", src, "-an", "-c:v", "libx264", "-crf", "16", "-preset", "veryfast", "-pix_fmt", "yuv420p", input]);
+  }
+  const srcDur = Math.max(0, rawDur - from);
+
+  const fitInfo = fitChain(W, H, vs.width, vs.height, still ? undefined : ov.fit);
+  if (!still) {
+    decisions.push({ beat, topic: "进画", choice: fitInfo.mode, why: fitInfo.why, key: "fit", value: fitInfo.fit, by: you("fit") ? "you" : "auto", warn: fitInfo.warn });
+  }
+
   let speed = 1;
   let hold = 0;
   let loop = false;
-  if (still && srcDur > 0.1 && srcDur < segDur - 0.05) {
+  if (still) {
     // 动画卡:入场演完就该是静止的,拉慢等于把设计好的节奏改掉,倒放更是把入场
     // 反着播一遍。短了就冻最后一帧——反正那一帧和它之后本来就一模一样。
-    hold = segDur - srcDur;
-    notes.push(`冻最后一帧 ${hold.toFixed(1)}s`);
-  } else if (srcDur > 0.1 && srcDur < segDur - 0.05) {
-    speed = Math.min(MAX_SLOWDOWN, segDur / srcDur);
-    if (speed > 1.02) notes.push(`放慢 ${speed.toFixed(2)}x`);
-    if (srcDur * speed < segDur - 0.05) {
-      if (srcDur <= MAX_REVERSIBLE) {
+    if (srcDur > 0.1 && srcDur < segDur - 0.05) {
+      hold = segDur - srcDur;
+      decisions.push({ beat, topic: "时长", choice: `动画 ${s1(srcDur)} 演完,停在最后一帧 ${s1(hold)}`, why: "入场演完本来就是静止的,拉慢会改掉设计好的节奏" });
+    }
+  } else {
+    const short = srcDur > 0.1 && srcDur < segDur - 0.05;
+    speed = you("slow") ? Number(ov.slow) : short ? Math.min(MAX_SLOWDOWN, segDur / srcDur) : 1;
+    decisions.push({
+      beat,
+      topic: "速度",
+      choice: speedLabel(speed),
+      why: `素材 ${s1(srcDur)}${from ? `(从第 ${s1(from)} 起)` : ""},这一拍 ${s1(segDur)}` +
+        (you("slow") ? "" : short ? `;自动放慢最多 ${MAX_SLOWDOWN} 倍,再慢就不像正常操作了` : ";素材够长,不用放慢"),
+      key: "slow",
+      value: Number(speed.toFixed(2)),
+      by: you("slow") ? "you" : "auto",
+    });
+    const played = srcDur * speed;
+    if (played < segDur - 0.05) {
+      const want = ov.fill ?? "pingpong";
+      const gap = segDur - played;
+      let fill = want;
+      let choice;
+      let why;
+      let warn = false;
+      if (want === "pingpong" && srcDur > MAX_REVERSIBLE) fill = "freeze";
+      if (fill === "pingpong") {
         // 正放 + 倒放接成一段:接缝两端是同一帧,循环起来没有跳切。
         // trim=start_frame=1 去掉倒放重复的那一帧。
-        input = out.replace(/\.mp4$/, "-pp.mp4");
+        const pp = out.replace(/\.mp4$/, "-pp.mp4");
         await ffmpeg([
-          "-i", src, "-filter_complex",
+          "-i", input, "-filter_complex",
           "[0:v]split=2[f][r];[r]reverse,trim=start_frame=1,setpts=PTS-STARTPTS[rv];[f][rv]concat=n=2:v=1:a=0[v]",
-          "-map", "[v]", "-an", "-c:v", "libx264", "-crf", "16", "-preset", "veryfast", "-pix_fmt", "yuv420p", input,
+          "-map", "[v]", "-an", "-c:v", "libx264", "-crf", "16", "-preset", "veryfast", "-pix_fmt", "yuv420p", pp,
         ]);
+        input = pp;
         loop = true;
-        notes.push(`正倒放接龙 ${(segDur / (2 * srcDur * speed)).toFixed(1)} 轮`);
+        const rounds = segDur / (2 * played);
+        choice = rounds <= 1 ? `正放一遍,再倒放 ${s1(gap)}` : `正倒放接龙 ${rounds.toFixed(1)} 轮`;
+        why = `放完 ${s1(played)},还差 ${s1(gap)};正放接倒放,接缝两端是同一帧,看不出跳切`;
+        // 来回放超过一轮,同一段内容就重复出现了 —— 和"硬循环 2.7 圈"是同一种毛病,只是没有跳切
+        if (rounds > 1.2) {
+          why += `;但同一段 ${s1(srcDur)} 的内容来回出现了 ${rounds.toFixed(1)} 轮,看得出重复 —— 换一段更长的素材,或者把这拍拆短`;
+          warn = true;
+        }
+      } else if (fill === "loop") {
+        loop = true;
+        choice = `硬循环 ${(segDur / played).toFixed(1)} 遍`;
+        why = `放完 ${s1(played)},还差 ${s1(gap)};每遍结尾会跳回开头`;
+        warn = true;
       } else {
-        hold = segDur - srcDur * speed;
-        notes.push(`冻最后一帧 ${hold.toFixed(1)}s`);
+        hold = gap;
+        choice = `冻最后一帧 ${s1(hold)}`;
+        why = want === "pingpong" ? `素材超过 ${MAX_REVERSIBLE}s,倒放要把整段读进内存,改成冻帧` : `放完 ${s1(played)},还差 ${s1(gap)}`;
+        warn = hold > 2;
       }
+      decisions.push({ beat, topic: "不够长时", choice, why, key: "fill", value: fill, by: you("fill") ? "you" : "auto", warn });
+    } else if (played > segDur + 0.5) {
+      const used = segDur / speed;
+      const unused = srcDur - used;
+      decisions.push({
+        beat,
+        topic: "起点",
+        choice: `只用 ${s1(from)}–${s1(from + used)}`,
+        why: `素材放完要 ${s1(played)},这一拍只有 ${s1(segDur)};后面 ${s1(unused)} 没用上${unused > 3 ? ",想用后面的内容就改起点" : ""}`,
+        key: "from",
+        value: from,
+        by: you("from") ? "you" : "auto",
+        warn: unused > 3 && !you("from"),
+      });
+    } else if (from) {
+      decisions.push({ beat, topic: "起点", choice: `从第 ${s1(from)} 开始`, key: "from", value: from, by: "you" });
     }
   }
 
   // 运镜:动画卡入场完是真静止的(shotcraft 的判例,元素落定后不许再动),
-  // 一拍十几秒全靠镜头给活气。以前这里整个跳过了,卡片动 1.5 秒之后就是张死图。
+  // 一拍十几秒全靠镜头给活气。录屏默认不加(本来就在动),她可以要。
   let cam = "";
-  if (move && frames > 0) {
+  if (move && move !== "none" && CAM_ANIM[move] && frames > 0) {
     const m = CAM_ANIM[move](frames);
     // 1.5 倍超采样就够:只推 5%,再高只是白烧 CPU(静图那条路用 2 倍是因为它推得多)
     cam = `scale=${evenPx(W * 1.5)}:${evenPx(H * 1.5)}:flags=bilinear,` +
@@ -765,25 +1041,27 @@ export async function renderAssetSeg(src, out, { W, H, fps, segDur, move = null,
   }
 
   const vf = [
-    ...(speed > 1.02 ? [`setpts=${speed.toFixed(4)}*PTS`] : []),
+    ...(Math.abs(speed - 1) > 0.02 ? [`setpts=${speed.toFixed(4)}*PTS`] : []),
     ...(hold > 0.05 ? [`tpad=stop_mode=clone:stop_duration=${hold.toFixed(3)}`] : []),
-    chain, ...(cam ? [cam] : []), `fps=${fps}`, "format=yuv420p",
+    fitInfo.chain, ...(cam ? [cam] : []), `fps=${fps}`, "format=yuv420p",
   ].join(",");
 
   await ffmpeg([
     ...(loop ? ["-stream_loop", "-1"] : []), "-i", input, "-t", segDur.toFixed(3),
     "-vf", vf, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", out,
   ]);
-  if (cam) notes.push(move);
-  return notes.join(" / ");
+  return { decisions };
 }
 
 async function edit(item) {
-  const { visuals, voices, meta } = await ensureInputs(item);
+  const up = item.upstream || {};
+  mark(item, null, "下载画面和配音");
+  const { visuals, voices, meta, patched } = await ensureInputs(item);
   if (!visuals.length || visuals.length !== voices.length) throw new Error("画面和配音数量对不上");
   const { width: W, height: H } = sizeFor(item.aspect);
   const dir = workDir(item, "edit");
   const fps = 30;
+  const decisions = [];
 
   // 1) per-clip video segments: 静态画面按节拍给不同运镜;录屏裁切铺满
   const segs = [];
@@ -794,29 +1072,79 @@ async function edit(item) {
   // 所以成片总长仍然等于 Σ(每拍时长 + 句尾留白),音轨不用动。
   const trans = planTransitions(meta);
   for (let i = 0; i < visuals.length; i++) {
+    const v = visuals[i];
+    const beat = meta[i].name;
+    const ov = v.overrides || {};
     const beatDur = meta[i].dur + (meta[i].gap ?? GAP);
     const segDur = beatDur + (trans[i] ? trans[i].dur : 0);
     const frames = Math.ceil(segDur * fps);
-    const seg = join(dir, `seg-${meta[i].name}.mp4`);
-    let assetNote = "";
-    if (visuals[i].kind === "video" || visuals[i].kind === "anim") {
-      // 录屏素材不加运镜(本来就在动);动画卡加,而且相邻两拍不重样
-      const isAnim = visuals[i].kind === "anim";
-      const move = isAnim ? CAM_ANIM_ORDER[animMove++ % CAM_ANIM_ORDER.length] : null;
-      assetNote = await renderAssetSeg(visuals[i].path, seg, { W, H, fps, segDur, move, frames, still: isAnim });
+    const seg = join(dir, `seg-${beat}.mp4`);
+    ensureDisk(dir, 0.5, `渲 ${beat} `);
+    decisions.push({
+      beat,
+      topic: "画面",
+      choice: v.source === "anim" ? `${CARD_TYPES[v.type] ?? "设计卡"}(动画)` : v.source === "card" ? `${CARD_TYPES[v.type] ?? "设计卡"}(静态图)` : `${v.kind === "video" ? "录屏" : "图片"}「${v.asset}」`,
+      why: `这拍 ${s1(segDur)}(配音 ${s1(meta[i].dur)} + 句尾留白 ${s1(meta[i].gap ?? GAP)}${trans[i] ? ` + 给下一刀转场的重叠 ${s1(trans[i].dur)}` : ""})`,
+    });
+    let camNote = "";
+    if (v.kind === "video" || v.kind === "anim") {
+      // 录屏素材默认不加运镜(本来就在动);动画卡加,而且相邻两拍不重样
+      const isAnim = v.kind === "anim";
+      let move = null;
+      let camWhy;
+      if (ov.camera && (ov.camera === "none" || CAM_ANIM[ov.camera])) {
+        move = ov.camera === "none" ? null : ov.camera;
+        camWhy = "你定的";
+      } else if (isAnim) {
+        move = CAM_ANIM_ORDER[animMove++ % CAM_ANIM_ORDER.length];
+        camWhy = "动画卡入场完是静止的,靠很轻的推拉给活气;三种轮流用,相邻两拍不重样";
+      } else {
+        camWhy = "录屏本身在动,不加运镜";
+      }
+      mark(item, beat, isAnim ? "动画卡进画" : "素材进画");
+      const r = await renderAssetSeg(v.path, seg, { W, H, fps, segDur, move, frames, still: isAnim, ov: isAnim ? {} : ov, beat });
+      decisions.push(...r.decisions);
+      decisions.push({ beat, topic: "运镜", choice: CAM_LABEL[move ?? "none"], why: camWhy, key: "camera", value: move ?? "none", by: ov.camera ? "you" : "auto" });
+      camNote = move ?? "";
     } else {
-      const move = pickCamera(meta[i].beat, i, lastMove);
+      // 静态图:设计卡本来就是按画面尺寸渲的;她上传的图片比例可能不一样 —— 以前这里
+      // 直接 scale 到 2W×2H,比例不同的图片会被拉变形。现在和录屏走同一套进画规则。
+      let move;
+      let camWhy;
+      if (ov.camera && (ov.camera === "none" || CAM_MOVES[ov.camera])) {
+        move = ov.camera;
+        camWhy = "你定的";
+      } else {
+        move = pickCamera(meta[i].beat, i, lastMove);
+        camWhy = `按节拍「${BEAT_LABEL[meta[i].beat] ?? meta[i].beat ?? "未标"}」挑的,和上一拍不同(同一个推近重复十几遍就是最明显的 AI 感)`;
+      }
       lastMove = move;
-      cameraLog.push(`${meta[i].name} ${move}`);
-      const m = CAM_MOVES[move](frames);
-      const zoom = `scale=${W * 2}:${H * 2}:flags=lanczos,zoompan=z='${m.z}':x='${m.x}':y='${m.y}':d=1:s=${W}x${H}:fps=${fps},setsar=1,format=yuv420p`;
-      await ffmpeg(["-loop", "1", "-framerate", String(fps), "-t", segDur.toFixed(3), "-i", visuals[i].path, "-vf", zoom, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
+      cameraLog.push(`${beat} ${move}`);
+      let pre = "";
+      if (v.source === "asset-image") {
+        const pinfo = await ffprobeInfo(v.path);
+        const st = (pinfo.streams || []).find((x) => x.codec_type === "video") || {};
+        const f = fitChain(W, H, st.width, st.height, ov.fit);
+        decisions.push({ beat, topic: "进画", choice: f.mode, why: f.why, key: "fit", value: f.fit, by: ov.fit ? "you" : "auto", warn: f.warn });
+        pre = `${f.chain},`;
+      }
+      const m = move === "none" ? { z: "1", x: CAM_X, y: CAM_Y } : CAM_MOVES[move](frames);
+      const zoom = `${pre}scale=${W * 2}:${H * 2}:flags=lanczos,zoompan=z='${m.z}':x='${m.x}':y='${m.y}':d=1:s=${W}x${H}:fps=${fps},setsar=1,format=yuv420p`;
+      mark(item, beat, "静态画面加运镜");
+      await ffmpeg(["-loop", "1", "-framerate", String(fps), "-t", segDur.toFixed(3), "-i", v.path, "-vf", zoom, "-an", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", seg]);
+      decisions.push({ beat, topic: "运镜", choice: CAM_LABEL[move] ?? move, why: camWhy, key: "camera", value: move, by: ov.camera ? "you" : "auto" });
+      camNote = move;
     }
-    console.log(`  [edit] seg ${meta[i].name} ${segDur.toFixed(1)}s done (${visuals[i].kind}${assetNote ? ", " + assetNote : ""}${lastMove ? ", " + lastMove : ""})`);
+    if (i > 0 && trans[i - 1]) {
+      const t = trans[i - 1];
+      decisions.push({ beat, topic: "转场", choice: t.type === "fade" ? `交叉淡化 ${t.dur}s` : `重转场 ${t.type} ${t.dur}s`, why: t.why });
+    }
+    console.log(`  [edit] seg ${beat} ${segDur.toFixed(1)}s done (${v.kind}${camNote ? ", " + camNote : ""})`);
     segs.push(seg);
   }
 
   // 2) 串起来:一刀一个 xfade(offset 用"到这拍为止的累计时长",不含重叠)
+  mark(item, null, "拼接转场");
   const videoOnly = join(dir, "video-only.mp4");
   if (segs.length === 1) {
     await ffmpeg(["-i", segs[0], "-c", "copy", videoOnly]);
@@ -836,6 +1164,7 @@ async function edit(item) {
   console.log(`  [edit] 转场:${trans.map((t) => `${t.into} ${t.type}`).join("  ")}`);
 
   // 3) voice track: each clip padded to its segment length, then concat
+  mark(item, null, "拼配音轨");
   const inputs = voices.flatMap((v) => ["-i", v]);
   const filters = meta.map((m, i) => `[${i}:a]aresample=44100,volume=5dB,atrim=${(m.head ?? 0).toFixed(3)}:${((m.head ?? 0) + m.dur).toFixed(3)},asetpts=PTS-STARTPTS,apad=pad_dur=${(m.gap ?? GAP).toFixed(3)}[a${i}]`).join(";");
   const concatF = meta.map((_, i) => `[a${i}]`).join("") + `concat=n=${meta.length}:v=0:a=1[av]`;
@@ -843,6 +1172,7 @@ async function edit(item) {
   await ffmpeg([...inputs, "-filter_complex", filters + ";" + concatF, "-map", "[av]", voiceM4a]);
 
   // 4) mux (+ optional BGM bed)
+  mark(item, null, "合成画面和声音");
   const out = join(dir, "edit.mp4");
   const bgmFile = item.bgm === "yes" ? readdirSafe(join(process.cwd(), "worker", "bgm")).find((f) => f.endsWith(".mp3")) : null;
   if (bgmFile) {
@@ -857,6 +1187,7 @@ async function edit(item) {
   }
 
   console.log("  [edit] uploading edit.mp4…");
+  mark(item, null, "上传成片");
   const { url } = await upload(item.projectId, out, "edit.mp4");
   const total = await ffprobeDur(out);
   const expected = meta.reduce((n, m) => n + m.dur + (m.gap ?? GAP), 0);
@@ -866,8 +1197,22 @@ async function edit(item) {
   if (Math.abs(total - expected) > 1.5) warn.push(`成片 ${total.toFixed(1)}s 与音轨预期 ${expected.toFixed(1)}s 对不上`);
   if (Number(vs.width) !== W || Number(vs.height) !== H) warn.push(`分辨率 ${vs.width}x${vs.height} ≠ ${W}x${H}`);
   const warnLine = warn.length ? `\n⚠ 剪辑自检:${warn.join(";")}` : "";
+
+  const takes = up.voice?.takes;
+  const pickedLabel = takes ? takes[takes.picked ?? "a"]?.label : null;
+  const ovCount = visuals.filter((v) => Object.keys(v.overrides || {}).length).length;
+  const dev = Math.abs(total - item.duration) / item.duration;
+  decisions.unshift(
+    { topic: "用的画面", choice: `素材阶段 ${latestV(up.footage?.images) ?? "(时间不明)"} 那版`, why: `${visuals.length} 拍` },
+    { topic: "用的配音", choice: `${pickedLabel ? `「${pickedLabel}」` : ""}${vtime(up.voice?.audio) ?? ""} 那版`.trim() || "配音阶段那版", why: patched.length ? `${patched.join("/")} 的音频文件丢了,单独补合成(音色可能略有差异)` : "每拍音频是从同一次整段合成里切出来的", warn: patched.length > 0 },
+    { topic: "时长", choice: `${total.toFixed(1)}s`, why: `目标 ~${item.duration}s;每拍多长完全跟着配音走`, warn: dev > 0.25 },
+    { topic: "背景音乐", choice: bgmFile ? `有(${bgmFile},-18dB 垫底)` : "无", why: "项目设置里选的" },
+    ...(ovCount ? [{ topic: "你的参数", choice: `${ovCount} 拍用了你定的剪辑参数`, by: "you" }] : []),
+    ...warn.map((w) => ({ topic: "自检", choice: w, warn: true })),
+  );
   return {
     video: url,
+    decisions,
     note: `粗剪 ${total.toFixed(1)}s,${visuals.length} 拍${bgmFile ? "(带 BGM 垫底)" : "(无 BGM)"}。${cameraLog.length ? `运镜:${cameraLog.join("  ")}` : ""}${trans.length ? `\n转场:${trans.map((t) => `${t.into} ${t.type}`).join("  ")}` : ""}
 节奏/画面对位请审。${warnLine}`,
   };
@@ -917,7 +1262,9 @@ function linesFromWords(words, maxChars = 14) {
   const merged = [];
   for (const l of lines) {
     const prev = merged[merged.length - 1];
-    if (prev && ([...l.text].length <= 3 || [...prev.text].length <= 3) && [...(prev.text + l.text)].length <= maxChars + 4) {
+    // 并完最多 16 字:字号是画面高度的 3.2%,1080 宽一行放得下约 17 个字,
+    // 以前放宽到 18 字,最后一个字会被挤到第二行(实见「……在哪儿了」的「了」单独掉下去)
+    if (prev && ([...l.text].length <= 3 || [...prev.text].length <= 3) && [...(prev.text + l.text)].length <= maxChars + 2) {
       prev.text += l.text;
       prev.end = l.end;
     } else merged.push(l);
@@ -932,6 +1279,7 @@ async function subtitles(item) {
   const size = sizeFor(item.aspect);
   const dir = workDir(item, "subs");
 
+  mark(item, null, "下载粗剪");
   const local = await downloadCached(editVideo, join(dir, "edit.mp4"));
 
   // One transparent PNG per ≤14-char line; time allocated by char share of the
@@ -940,9 +1288,12 @@ async function subtitles(item) {
   let offset = 0;
   const overlays = []; // { png, start, end }
   let byWords = 0;
+  const decisions = [];
   for (const m of meta) {
+    mark(item, m.name, "渲字幕行");
     // 首选 MiniMax 给的字级时间戳;老项目没有就退回按字数估算
     const timed = Array.isArray(m.words) && m.words.length ? linesFromWords(m.words) : null;
+    const before = overlays.length;
     if (timed?.length) {
       byWords += 1;
       for (const l of timed) {
@@ -962,10 +1313,17 @@ async function subtitles(item) {
         t += seg;
       }
     }
+    decisions.push(
+      timed?.length
+        ? { beat: m.name, topic: "字幕", choice: `${overlays.length - before} 行 · 跟人声逐字对齐` }
+        : { beat: m.name, topic: "字幕", choice: `${overlays.length - before} 行 · 按字数估算时间`, why: "这拍没有字级时间戳,字幕可能比人声早或晚", warn: true },
+    );
     offset += m.dur + (m.gap ?? gap);
   }
   await closeBrowser();
 
+  mark(item, null, "烧录字幕");
+  ensureDisk(dir, 0.5, "烧录字幕");
   const inputs = overlays.flatMap((o) => ["-i", o.png]);
   const chain = overlays
     .map((o, i) => {
@@ -977,6 +1335,7 @@ async function subtitles(item) {
   const out = join(dir, "subs.mp4");
   await ffmpeg(["-i", local, ...inputs, "-filter_complex", chain, "-map", "[vout]", "-map", "0:a", "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "copy", out]);
   console.log("  [subtitles] uploading subs.mp4…");
+  mark(item, null, "上传带字幕成片");
   const { url } = await upload(item.projectId, out, "subs.mp4");
   const warn = [];
   if (!overlays.length) warn.push("一行字幕都没有");
@@ -985,9 +1344,16 @@ async function subtitles(item) {
   if (overlays.length && vidDur - lastEnd > 3) warn.push(`结尾 ${(vidDur - lastEnd).toFixed(1)}s 没有字幕`);
   const warnLine = warn.length ? `\n⚠ 字幕自检:${warn.join(";")}` : "";
   const timing = byWords === meta.length ? "跟着人声逐字对齐" : byWords ? `${byWords}/${meta.length} 拍逐字对齐,其余按字数估算` : "按字数估算(这条片没有字级时间戳)";
+  decisions.unshift(
+    { topic: "底片", choice: `剪辑阶段 ${vtime(editVideo) ?? "(时间不明)"} 那版粗剪`, why: "字幕烧在这版视频上;粗剪之后再改,字幕要跟着重出" },
+    { topic: "断行", choice: `${overlays.length} 行,每行最多 14 字`, why: "按标点断,1-3 个字的碎片并进上一行,免得一闪一个字" },
+    { topic: "对齐", choice: timing, warn: byWords < meta.length },
+    ...warn.map((w) => ({ topic: "自检", choice: w, warn: true })),
+  );
   return {
     video: url,
     subs: overlays.map((o) => ({ text: o.text, start: o.start, end: o.end })),
+    decisions,
     note: `字幕已烧录(${overlays.length} 行,${timing})。错字/断句/位置请审。${warnLine}`,
   };
 }
@@ -998,9 +1364,11 @@ async function polish(item) {
 
   // ── 成片自动体检(学 MuseDock visualQaService):画幅/时长/黑屏/冻结/抽帧总评 ──
   const dir = workDir(item, "polish");
+  mark(item, null, "下载成片");
   const local = await downloadCached(video, join(dir, "final.mp4"));
   const qa = { issues: [] };
   try {
+    mark(item, null, "体检画幅和时长");
     const info = await ffprobeInfo(local);
     const dur = Number(info.format?.duration || 0);
     const stream = (info.streams || []).find((s) => s.codec_type === "video") || {};
@@ -1013,15 +1381,18 @@ async function polish(item) {
     if (!qa.aspectOk) qa.issues.push(`画幅 ${stream.width}x${stream.height},应为 ${wantW}x${wantH}`);
     if (qa.deviationPct > 25) qa.issues.push(`时长偏离目标 ${qa.deviationPct}%(>${25}%)`);
 
+    mark(item, null, "体检黑屏");
     const black = await ffmpegOut(["-i", local, "-vf", "blackdetect=d=0.6:pix_th=0.10", "-an", "-f", "null", "-"]);
     qa.blackIntervals = (black.match(/black_start:/g) || []).length;
     if (qa.blackIntervals > 0) qa.issues.push(`检测到 ${qa.blackIntervals} 段疑似黑屏(>0.6s)`);
 
+    mark(item, null, "体检冻结");
     const freeze = await ffmpegOut(["-i", local, "-vf", "freezedetect=n=-60dB:d=2", "-an", "-f", "null", "-"]);
     qa.freezeIntervals = (freeze.match(/freeze_start:/g) || []).length;
     if (qa.freezeIntervals > 0) qa.issues.push(`检测到 ${qa.freezeIntervals} 段画面冻结(>2s)`);
 
     // 抽 3 帧给视觉模型做总评
+    mark(item, null, "抽帧给 AI 总评");
     const picks = [0.15, 0.5, 0.85];
     const frames = [];
     for (let i = 0; i < picks.length; i++) {
@@ -1042,9 +1413,23 @@ async function polish(item) {
     ? `体检没跑成:${qa.error}`
     : `体检:${qa.aspectOk ? "画幅✓" : "画幅✗"} · ${qa.durationSec}s/目标${qa.targetSec}s(偏差${qa.deviationPct}%) · 黑屏${qa.blackIntervals} · 冻结${qa.freezeIntervals} · AI总评${qa.vision?.ok === false ? "有问题" : "通过"}`;
 
+  const src = item.upstream?.subtitles?.video ? "字幕阶段" : "剪辑阶段";
+  const decisions = [
+    { topic: "体检的成片", choice: `${src} ${vtime(video) ?? "(时间不明)"} 那版`, why: "交付打包用的也是这一版" },
+    ...(qa.error
+      ? [{ topic: "体检", choice: "没跑成", why: qa.error, warn: true }]
+      : [
+          { topic: "画幅", choice: qa.aspectOk ? "对" : "不对", warn: !qa.aspectOk },
+          { topic: "时长", choice: `${qa.durationSec}s,偏离目标 ${qa.deviationPct}%`, why: "超过 25% 标黄", warn: qa.deviationPct > 25 },
+          { topic: "黑屏", choice: `${qa.blackIntervals} 段`, why: "超过 0.6s 的黑画面", warn: qa.blackIntervals > 0 },
+          { topic: "冻结", choice: `${qa.freezeIntervals} 段`, why: "超过 2s 画面完全不动(冻帧补时长会被算进来)", warn: qa.freezeIntervals > 0 },
+          { topic: "AI 总评", choice: qa.vision?.ok === false ? "有问题" : "通过", why: (qa.vision?.issues || []).join(";") || "抽了开头/中间/结尾 3 帧", warn: qa.vision?.ok === false },
+        ]),
+  ];
   return {
     video,
     qa,
+    decisions,
     note: `${qaLine}\n要微调(节奏/某句/某画面)就打回写批注;满意就通过,进入交付打包。${qa.issues.length ? "\n⚠ " + qa.issues.join(" / ") : ""}`,
   };
 }
@@ -1055,20 +1440,33 @@ async function deliver(item) {
   const scriptText = up.script?.script || "";
   const size = sizeFor(item.aspect);
 
+  mark(item, null, "写封面标题");
   const cov = await chatJSON(guided(item, PROMPTS.cover(item, t, scriptText)), { temperature: 0.8 });
   const dir = workDir(item, "deliver");
   const png = join(dir, "cover.png");
+  mark(item, null, "渲封面");
   const coverRender = await renderCard({ kicker: "", big: cov.main, sub: cov.sub, type: "text" }, size, png);
   if (coverRender.layout?.length) console.log(`  [deliver] 封面排版:${coverRender.layout.join(";")}`);
   await closeBrowser();
+  mark(item, null, "上传封面");
   const { url: coverUrl } = await upload(item.projectId, png, "cover.png");
 
+  mark(item, null, "写发布文案");
   const caption = await chatJSON(guided(item, PROMPTS.caption(item, t, scriptText)), { temperature: 0.7 });
+  mark(item, null, "审封面");
   const coverQa = await reviewImage(png, "审这张短视频封面:1)主标题 0.5 秒内能不能读清 2)文字有没有被裁/溢出 3)有没有低俗震惊体感");
   const warnLine = coverQa.ok ? "" : `\n⚠ 封面自检:${(coverQa.issues || []).join(";")}`;
+  const decisions = [
+    { topic: "封面主标题", choice: String(cov.main ?? ""), why: cov.sub ? `副标题:${cov.sub}` : "AI 按选题和脚本写的" },
+    ...(coverRender.layout?.length ? [{ topic: "封面排版", choice: "有排版问题", why: coverRender.layout.join(";"), warn: true }] : []),
+    { topic: "封面审稿", choice: coverQa.ok ? "通过" : "有问题", why: (coverQa.issues || []).join(";") || "主标题 0.5 秒内读得清、没被裁", warn: !coverQa.ok },
+    { topic: "文案", choice: String(caption?.title ?? ""), why: `${(caption?.hashtags || []).length} 个话题标签` },
+    { topic: "打包", choice: "全部通过时打包", why: "视频取打包那一刻最新的成片;之后改了剪辑,全部重新通过时会自动换成新成片" },
+  ];
   return {
     cover: coverUrl,
     caption,
+    decisions,
     note: `封面 + 抖音文案。通过后自动打包(视频+封面+文案 zip)可下载。${warnLine}`,
   };
 }

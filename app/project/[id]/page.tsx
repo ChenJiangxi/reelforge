@@ -45,15 +45,6 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const voice = artOf("voice");
   const subs = artOf("subtitles").subs ?? [];
 
-  const clips: ClipThumb[] = (script.clips ?? []).map(
-    (c: { name: string; text: string }, i: number) => ({
-      name: c.name,
-      text: c.text,
-      image: footage.images?.[i],
-      dur: voice.voiceMeta?.clips?.[i]?.dur,
-      gap: voice.voiceMeta?.clips?.[i]?.gap,
-    }),
-  );
 
   // 素材库(录屏/图片),扫盘得来:项目素材 + 全局共享素材,都可拖到节拍上
   const readAssets = (id: string): Asset[] => {
@@ -70,6 +61,24 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       }));
   };
   const assets: Asset[] = [...readAssets(project.id), ...readAssets("_global")];
+
+  // 每拍是什么画面(决定清单里的运镜选项按它给)+ 她挂在这拍上的剪辑参数
+  const kindOf = (name: string, asset?: string): ClipThumb["kind"] => {
+    const card = footage.cards?.find((c) => c.name === name) as { asset?: string; anim?: string } | undefined;
+    const a = card?.asset ?? asset;
+    if (a) return assets.find((x) => x.name === a)?.kind === "video" ? "video" : "image";
+    if (!card) return undefined;
+    return card.anim ? "anim" : "card";
+  };
+  const clips: ClipThumb[] = (script.clips ?? []).map((c, i) => ({
+    name: c.name,
+    text: c.text,
+    image: footage.images?.[i],
+    dur: voice.voiceMeta?.clips?.[i]?.dur,
+    gap: voice.voiceMeta?.clips?.[i]?.gap,
+    kind: kindOf(c.name, c.asset),
+    overrides: c.overrides,
+  }));
 
   return (
     <div className="project-shell max-w-[1600px]">

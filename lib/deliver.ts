@@ -8,11 +8,15 @@ import { MEDIA_DIR } from "./media";
 // Package the delivered project: final video + vertical cover + Douyin caption.
 // Media files are located from artifact URLs (/api/media/<projectId>/<file>)
 // back to MEDIA_DIR paths.
+// 2026-09-13 起上传的 URL 都带 ?v=<时间戳>(防浏览器缓存旧文件)—— 这里以前没去掉查询串,
+// 拿 "subs.mp4?v=…" 当文件名去盘上找,当然找不到,于是下载包里只有 video-MISSING.txt,
+// 而且不报错。先去掉 ? 之后的部分再拼路径。
 function urlToPath(projectId: string, url?: string): string | undefined {
   if (!url) return undefined;
   const prefix = `/api/media/${projectId}/`;
   if (!url.startsWith(prefix)) return undefined;
-  return path.join(MEDIA_DIR, projectId, decodeURIComponent(url.slice(prefix.length)));
+  const rel = url.slice(prefix.length).split("?")[0].split("#")[0];
+  return path.join(MEDIA_DIR, projectId, decodeURIComponent(rel));
 }
 
 export async function runDelivery(projectId: string): Promise<string> {
@@ -65,5 +69,16 @@ export async function runDelivery(projectId: string): Promise<string> {
     where: { id: projectId },
     data: { status: "delivered", packagePath: zipPath },
   });
+  // 包里缺东西必须说出来,不能只在 zip 里塞一个 MISSING.txt
+  const missing = [
+    !(video && existsSync(video)) ? "成片视频" : "",
+    !(cover && existsSync(cover)) ? "封面" : "",
+    !caption ? "文案" : "",
+  ].filter(Boolean);
+  if (missing.length) {
+    await prisma.message.create({
+      data: { projectId, role: "agent", text: `下载包打好了,但缺了:${missing.join("、")}。找不到对应文件,需要把那一步重做一次。` },
+    });
+  }
   return zipPath;
 }

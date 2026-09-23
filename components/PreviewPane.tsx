@@ -3,8 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { stageLabel, type Artifacts, type Comment } from "@/lib/stages";
+import { DecisionList, type BeatInfo, type DecisionSet } from "@/components/DecisionList";
+import { RerunForm } from "@/components/RerunForm";
 
-export type ClipThumb = { name: string; text: string; image?: string; dur?: number; gap?: number };
+export type ClipThumb = {
+  name: string;
+  text: string;
+  image?: string;
+  dur?: number;
+  gap?: number;
+  kind?: BeatInfo["kind"];
+  overrides?: BeatInfo["overrides"];
+};
 export type StageView = {
   id: string;
   kind: string;
@@ -13,6 +23,31 @@ export type StageView = {
   artifacts: Artifacts;
   comments: Comment[];
 };
+export type RerunRequest = { kind: string; note: string; nonce: number };
+
+const VIDEO_KINDS = ["edit", "subtitles", "polish"];
+
+// 某个视频阶段旁边要摆哪些决定:它自己的 + 它底下那几层的逐拍决定(成片里看到的每一拍,
+// 进画/速度/运镜是剪辑定的)。剪辑的决定可以直接改。
+function decisionSetsFor(view: StageView, stages: StageView[]): DecisionSet[] {
+  const of = (k: string) => stages.find((s) => s.kind === k);
+  const own: DecisionSet = { stage: view.kind, decisions: view.artifacts.decisions, editable: view.kind === "edit" };
+  if (!VIDEO_KINDS.includes(view.kind)) return [own];
+  const below = VIDEO_KINDS.slice(0, VIDEO_KINDS.indexOf(view.kind)).reverse();
+  return [
+    own,
+    ...below.map((k) => ({ stage: k, decisions: of(k)?.artifacts.decisions, editable: k === "edit" })),
+  ];
+}
+
+function beatsFrom(clips: ClipThumb[]): BeatInfo[] {
+  let t = 0;
+  return clips.map((c) => {
+    const b: BeatInfo = { name: c.name, text: c.text, kind: c.kind, overrides: c.overrides, offset: c.dur != null ? t : undefined };
+    t += (c.dur ?? 0) + (c.gap ?? 0.25);
+    return b;
+  });
+}
 
 // 预览区 = 阶段查看器:进度条点哪段,这里就看哪段。
 // 默认视图:待审 > 最新成片 > 制作中占位。审核门只在待审阶段出现。
@@ -55,6 +90,7 @@ export function PreviewPane({
   selectedId,
   onSelect,
   projectId,
+  rerunRequest,
 }: {
   stages: StageView[];
   clips: ClipThumb[];
@@ -65,18 +101,35 @@ export function PreviewPane({
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   projectId: string;
+  rerunRequest?: RerunRequest | null;
 }) {
   const vertical = aspect !== "16:9";
   const { over, dropProps } = useAssign(projectId);
+  const [rerun, setRerun] = useState<{ stageId: string; note: string; allowSwitch: boolean } | null>(null);
+  const [activeBeat, setActiveBeat] = useState<string | null>(null);
   const awaiting = stages.find((s) => s.status === "awaiting_review");
   const withVideo = [...stages].reverse().find((s) => s.artifacts.video);
   const working = stages.find((s) => s.status === "working");
 
+  // 聊天里说"重做 XX" → LLM 只猜阶段,不执行:在这里打开重做表(阶段可换),她确认了才算
+  const [dismissed, setDismissed] = useState<number | null>(null);
+  const fromChat =
+    rerunRequest && rerunRequest.nonce !== dismissed ? stages.find((x) => x.kind === rerunRequest.kind) : undefined;
+  const openRerun = rerun ?? (fromChat ? { stageId: fromChat.id, note: rerunRequest!.note, allowSwitch: true } : null);
+  const closeRerun = () => {
+    setRerun(null);
+    if (rerunRequest) setDismissed(rerunRequest.nonce);
+  };
+
   const view: StageView | null =
     stages.find((s) => s.id === selectedId) ?? awaiting ?? withVideo ?? working ?? stages[0] ?? null;
   const isAwaiting = view?.status === "awaiting_review";
+  const failure = view && view.status === "changes_requested" ? failureOf(view) : null;
   const showingCut = view != null && withVideo != null && view.id === withVideo.id;
-  const showTracks = !!view?.artifacts.video && ["edit", "subtitles", "polish"].includes(view.kind);
+  const showTracks = !!view?.artifacts.video && VIDEO_KINDS.includes(view.kind);
+  const isVideoView = !!view?.artifacts.video && VIDEO_KINDS.includes(view.kind) && view.status !== "working";
+  const beats = beatsFrom(clips);
+  const canRedo = view != null && (view.status === "approved" || (view.status === "pending" && !!view.artifacts.note));
 
   if (!view) {
     return (
@@ -85,6 +138,18 @@ export function PreviewPane({
       </div>
     );
   }
+
+  const decisionPanel = (
+    <DecisionList
+      sets={decisionSetsFor(view, stages)}
+      beats={beats}
+      projectId={projectId}
+      activeBeat={activeBeat}
+      dropProps={isVideoView ? dropProps : undefined}
+      over={over}
+    />
+  );
+  const showSidePanel = !isVideoView && view.status !== "working" && !(view.status === "pending" && !view.artifacts.note);
 
   return (
     <div className="flex h-full flex-col">
@@ -103,6 +168,21 @@ export function PreviewPane({
               制作中
             </span>
           )}
+          {failure && (
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-destructive">
+              <span className="inline-block size-1.5 rounded-full bg-destructive" />
+              没做成
+            </span>
+          )}
+          {canRedo && !openRerun && (
+            <button
+              onClick={() => setRerun({ stageId: view.id, note: "", allowSwitch: false })}
+              className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+              title="重做这一步;会先列出哪些阶段跟着重出,你确认了才动"
+            >
+              重做这一步
+            </button>
+          )}
           {withVideo && !showingCut && (
             <button
               onClick={() => onSelect(withVideo.id)}
@@ -114,15 +194,96 @@ export function PreviewPane({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        <StageArtifact stage={view} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} dropProps={dropProps} over={over} onSelect={onSelect} />
+      <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:flex lg:gap-3 lg:overflow-hidden">
+        <div className="min-h-0 min-w-0 lg:flex-1 lg:overflow-y-auto">
+          {failure && (
+            <FailureBanner
+              failure={failure}
+              onRetry={() => setRerun({ stageId: view.id, note: "", allowSwitch: false })}
+            />
+          )}
+          <StageArtifact
+            stage={view}
+            stages={stages}
+            vertical={vertical}
+            clips={clips}
+            audio={audio}
+            wave={wave}
+            projectId={projectId}
+            dropProps={dropProps}
+            over={over}
+            onSelect={onSelect}
+            decisionPanel={decisionPanel}
+            onActiveBeat={setActiveBeat}
+          />
+        </div>
+        {showSidePanel && (
+          <aside className="mt-3 flex min-h-0 flex-col border-t border-border/70 lg:mt-0 lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0">
+            {decisionPanel}
+          </aside>
+        )}
       </div>
 
-      {showTracks && (
+      {showTracks && !openRerun && (
         <Tracks clips={clips} wave={wave} audio={audio} subs={subs} vertical={vertical} dropProps={dropProps} over={over} />
       )}
 
-      {isAwaiting && <GateBar stageId={view.id} onDone={() => onSelect(null)} />}
+      {openRerun ? (
+        <RerunForm
+          key={`${openRerun.stageId}-${openRerun.note}`}
+          stages={stages.map((s) => ({ id: s.id, kind: s.kind, status: s.status }))}
+          stageId={openRerun.stageId}
+          initialNote={openRerun.note}
+          allowSwitch={openRerun.allowSwitch}
+          onClose={closeRerun}
+        />
+      ) : (
+        isAwaiting && (
+          <GateBar
+            stageId={view.id}
+            onDone={() => onSelect(null)}
+            onReject={() => setRerun({ stageId: view.id, note: "", allowSwitch: false })}
+          />
+        )
+      )}
+    </div>
+  );
+}
+
+// ── 失败:说清卡在哪一拍、哪一步,给一个重试 ──
+
+type FailureView = { beat?: string; step?: string; message: string; kind?: string };
+
+function failureOf(stage: StageView): FailureView | null {
+  const f = stage.artifacts.failure;
+  if (f) return f;
+  const note = stage.artifacts.note ?? "";
+  if (note.startsWith("FAILED:")) return { message: note.replace(/^FAILED:\s*/, "") };
+  return null;
+}
+
+function FailureBanner({ failure, onRetry }: { failure: FailureView; onRetry: () => void }) {
+  const where = [
+    failure.beat ? `第 ${Number(failure.beat.slice(1))} 拍(${failure.beat})` : "",
+    failure.step ?? "",
+  ].filter(Boolean).join(" · ");
+  return (
+    <div className="mx-auto mb-3 max-w-2xl border-l-2 border-destructive bg-destructive/5 px-3 py-2 text-sm">
+      <div className="font-medium text-destructive">
+        没做成{where ? `,卡在 ${where}` : ""}
+      </div>
+      <div className="mt-0.5 break-words text-xs text-foreground/80">{failure.message}</div>
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          onClick={onRetry}
+          className="rounded-full bg-foreground px-3 py-1 text-xs font-medium text-background hover:opacity-85"
+        >
+          重试
+        </button>
+        <span className="text-xs text-muted-foreground">
+          {failure.kind === "disk" ? "渲染机磁盘空出来之后会自动接着做" : "下面是上一版能看的产物(如果有)"}
+        </span>
+      </div>
     </div>
   );
 }
@@ -131,6 +292,7 @@ export function PreviewPane({
 
 function StageArtifact({
   stage,
+  stages,
   vertical,
   clips,
   audio,
@@ -139,8 +301,11 @@ function StageArtifact({
   dropProps,
   over,
   onSelect,
+  decisionPanel,
+  onActiveBeat,
 }: {
   stage: StageView;
+  stages: StageView[];
   vertical: boolean;
   clips: ClipThumb[];
   audio?: string;
@@ -149,8 +314,11 @@ function StageArtifact({
   dropProps?: (clip: string) => Record<string, unknown>;
   over?: string | null;
   onSelect?: (id: string | null) => void;
+  decisionPanel: React.ReactNode;
+  onActiveBeat: (beat: string | null) => void;
 }) {
   const a = stage.artifacts;
+  const pass = { stages, vertical, clips, audio, wave, projectId, dropProps, over, onSelect, decisionPanel, onActiveBeat };
 
   if (stage.status === "pending" && !stage.artifacts.video && !stage.artifacts.images?.length && !stage.artifacts.script && !stage.artifacts.note) {
     return (
@@ -162,11 +330,15 @@ function StageArtifact({
     );
   }
   if (stage.status === "pending") {
-    // 重做排队中:旧产物继续可看(下面照常渲染),上面加一行说明
+    // 重做排队中:旧产物继续可看(下面照常渲染),上面加一行说明 —— 包括为什么在排队
+    const q = stage.comments.filter((c) => c.decision === "queued").at(-1)?.text;
+    const why = q ? (q.startsWith("因为") ? q : `因为${q}`) : "";
     return (
       <>
-        <p className="mx-auto mb-3 max-w-2xl text-center text-xs text-accent">重做排队中 —— 下面是上一版,新版出来自动替换</p>
-        <StageArtifact stage={{ ...stage, status: "approved" }} vertical={vertical} clips={clips} audio={audio} wave={wave} projectId={projectId} dropProps={dropProps} over={over} onSelect={onSelect} />
+        <p className="mx-auto mb-3 max-w-2xl text-center text-xs text-accent">
+          重做排队中{why ? `(${why})` : ""} —— 下面是上一版,新版出来自动替换
+        </p>
+        <StageArtifact stage={{ ...stage, status: "approved" }} {...pass} />
       </>
     );
   }
@@ -179,11 +351,15 @@ function StageArtifact({
     );
   }
 
-  const commentsBlock = stage.comments.length > 0 && (
+  const events = stage.comments.filter((c) => c.decision !== "queued").slice(-6);
+  const commentsBlock = events.length > 0 && (
     <div className="mx-auto mt-4 max-w-2xl space-y-1 text-xs text-muted-foreground">
-      {stage.comments.map((c, i) => (
-        <div key={i}>
-          💬 {c.text} <span className="text-muted-foreground/50">({c.decision})</span>
+      {events.map((c, i) => (
+        <div key={i} className={c.decision === "failed" ? "text-destructive/80" : ""}>
+          {c.decision === "failed" ? "✕" : "💬"} {c.text}{" "}
+          <span className="text-muted-foreground/50">
+            ({c.decision === "reject" ? "打回" : c.decision === "comment" ? "批注" : c.decision === "approve" ? "通过" : c.decision === "failed" ? "失败" : c.decision})
+          </span>
         </div>
       ))}
     </div>
@@ -201,11 +377,21 @@ function StageArtifact({
   } else if (stage.kind === "script") {
     body = <ScriptEditor stage={stage} projectId={projectId} />;
   } else if (stage.kind === "footage" && a.images?.length) {
-    body = <CardStrip images={a.images} cards={a.cards ?? []} />;
+    body = <CardStrip images={a.images} cards={a.cards ?? []} onIndex={(i) => onActiveBeat(a.cards?.[i]?.name ?? null)} />;
   } else if (stage.kind === "voice") {
     body = <VoiceTakes stage={stage} projectId={projectId} fallback={{ audio, wave }} onSelect={onSelect} />;
   } else if (a.video) {
-    body = <VideoWithBeatRail stage={stage} vertical={vertical} clips={clips} dropProps={dropProps} over={over} />;
+    body = (
+      <VideoWithBeatRail
+        stage={stage}
+        vertical={vertical}
+        clips={clips}
+        dropProps={dropProps}
+        over={over}
+        decisionPanel={decisionPanel}
+        onActiveBeat={onActiveBeat}
+      />
+    );
   } else if (stage.kind === "deliver") {
     body = (
       <div className="mx-auto flex max-w-3xl flex-wrap items-start justify-center gap-4">
@@ -222,18 +408,14 @@ function StageArtifact({
         )}
       </div>
     );
-  } else if (a.note) {
-    body = (
-      <p className={`mx-auto max-w-3xl whitespace-pre-wrap text-sm ${a.note.startsWith("FAILED:") ? "text-destructive" : "text-muted-foreground"}`}>
-        {a.note}
-      </p>
-    );
   }
+  const noteOnly = !body && !!a.note && !a.note.startsWith("FAILED:");
 
   return (
     <>
       {body}
-      {a.note && !a.note.startsWith("FAILED:") && (stage.kind !== "topic" && stage.kind !== "script") && (
+      {noteOnly && <p className="mx-auto max-w-3xl whitespace-pre-wrap text-sm text-muted-foreground">{a.note}</p>}
+      {a.note && !a.note.startsWith("FAILED:") && body && !["topic", "script"].includes(stage.kind) && (
         <p className="mx-auto mt-3 max-w-2xl text-center text-xs text-muted-foreground">{a.note}</p>
       )}
       {commentsBlock}
@@ -418,9 +600,21 @@ function VoiceTakes({
 
 // ── 素材审阅:横向滑动,一张一张过(像刷抖音),带吸附/计数/箭头 ──
 
-function CardStrip({ images, cards }: { images: string[]; cards: { text?: string; asset?: string }[] }) {
+function CardStrip({
+  images,
+  cards,
+  onIndex,
+}: {
+  images: string[];
+  cards: { text?: string; asset?: string }[];
+  onIndex?: (i: number) => void;
+}) {
   const stripRef = useRef<HTMLDivElement>(null);
-  const [idx, setIdx] = useState(0);
+  const [idx, setIdxRaw] = useState(0);
+  const setIdx = (i: number) => {
+    setIdxRaw(i);
+    onIndex?.(i);
+  };
   const n = images.length;
 
   const figs = () =>
@@ -549,20 +743,22 @@ function CardStrip({ images, cards }: { images: string[]; cards: { text?: string
   );
 }
 
-// ── 视频 + 节拍导航栏:填满视频右侧死区,点哪拍跳哪拍 ──
+// ── 视频 + 决定清单:清单就摆在成片旁边,点哪拍跳哪拍,播到哪拍亮哪拍 ──
 
 function VideoWithBeatRail({
   stage,
   vertical,
   clips,
-  dropProps,
-  over,
+  decisionPanel,
+  onActiveBeat,
 }: {
   stage: StageView;
   vertical: boolean;
   clips: ClipThumb[];
   dropProps?: (clip: string) => Record<string, unknown>;
   over?: string | null;
+  decisionPanel: React.ReactNode;
+  onActiveBeat: (beat: string | null) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const GAP = 0.25; // 兜底:旧项目的 voiceMeta 里没有每拍 gap
@@ -574,47 +770,50 @@ function VideoWithBeatRail({
       t += (c.dur ?? 0) + (c.gap ?? GAP);
     }
   }
-  const seek = (i: number) => {
+  const seek = (name: string) => {
+    const i = clips.findIndex((c) => c.name === name);
     const v = videoRef.current;
-    if (v) {
+    if (v && i >= 0) {
       v.currentTime = offsets[i] ?? 0;
       v.play().catch(() => {});
     }
   };
+  const lastBeat = useRef<string | null>(null);
+  const onTime = () => {
+    const v = videoRef.current;
+    if (!v || !clips.length) return;
+    let i = 0;
+    while (i + 1 < offsets.length && offsets[i + 1] <= v.currentTime) i++;
+    const name = clips[i]?.name ?? null;
+    if (name !== lastBeat.current) {
+      lastBeat.current = name;
+      onActiveBeat(name);
+    }
+  };
 
   return (
-    <div className="flex h-full items-stretch justify-center gap-3">
+    <div className={`flex h-full gap-3 ${vertical ? "flex-col items-stretch lg:flex-row" : "flex-col items-center"}`}>
       <video
         ref={videoRef}
         key={stage.artifacts.video}
         controls
         autoPlay={stage.status === "awaiting_review"}
-        className={`rounded-md border border-border bg-black ${vertical ? "max-h-full w-auto" : "w-full max-w-3xl"}`}
+        onTimeUpdate={onTime}
+        className={`rounded-md border border-border bg-black ${vertical ? "mx-auto max-h-[70vh] w-auto lg:max-h-full" : "w-full max-w-3xl"}`}
         src={stage.artifacts.video}
       />
-      {vertical && clips.length > 0 && (
-        <div className="hidden w-52 shrink-0 flex-col overflow-y-auto lg:flex">
-          <div className="border-b border-border/70 px-3 py-2 text-[11px] font-medium text-muted-foreground">
-            节拍 · 点击跳转
-          </div>
-          <div className="min-h-0 flex-1 divide-y divide-border/60 overflow-y-auto">
-            {clips.map((c, i) => (
-              <button
-                key={c.name}
-                onClick={() => seek(i)}
-                {...(dropProps ? dropProps(c.name) : {})}
-                className={`block w-full px-3 py-2 text-left hover:bg-muted/70 ${over === c.name ? "bg-accent-soft ring-1 ring-inset ring-accent" : ""}`}
-                title={c.text}
-              >
-                <span className="font-mono text-[10px] text-accent">
-                  {String(i + 1).padStart(2, "0")} {c.dur != null ? `${(offsets[i]).toFixed(1)}s` : ""}
-                </span>
-                <span className="mt-0.5 line-clamp-2 block text-xs leading-snug text-foreground/85">{c.text}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <div
+        className={`flex min-h-0 flex-col border-border/70 ${
+          vertical ? "border-t lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0" : "w-full max-w-3xl border-t"
+        }`}
+        onClickCapture={(e) => {
+          // 决定清单里点拍号 → 视频跳到那一拍
+          const el = (e.target as HTMLElement).closest("[data-beat]") as HTMLElement | null;
+          if (el?.dataset.beat) seek(el.dataset.beat);
+        }}
+      >
+        {decisionPanel}
+      </div>
     </div>
   );
 }
@@ -709,24 +908,16 @@ function Tracks({
 
 // ── the review gate ──
 
-function GateBar({ stageId, onDone }: { stageId: string; onDone: () => void }) {
+function GateBar({ stageId, onDone, onReject }: { stageId: string; onDone: () => void; onReject: () => void }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [rejecting, setRejecting] = useState(false);
-  const [note, setNote] = useState("");
-  const [err, setErr] = useState("");
 
-  async function resolve(decision: "approve" | "reject") {
-    if (decision === "reject" && !note.trim()) {
-      setErr("打回要写一句原因,agent 照着改");
-      return;
-    }
-    setErr("");
+  async function approve() {
     setBusy(true);
     await fetch("/api/stage/resolve", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ stageId, decision, text: note.trim() || undefined }),
+      body: JSON.stringify({ stageId, decision: "approve" }),
     });
     setBusy(false);
     onDone();
@@ -735,58 +926,23 @@ function GateBar({ stageId, onDone }: { stageId: string; onDone: () => void }) {
 
   return (
     <div className="border-t border-border/70 bg-accent-soft/40 p-3">
-      {rejecting && (
-        <div className="mb-2">
-          <textarea
-            autoFocus
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="打回原因(指到具体某句/某卡),agent 照着改…"
-            rows={2}
-            className="w-full rounded-md border border-border bg-card p-2 text-sm outline-none focus:border-accent/60"
-          />
-        </div>
-      )}
-      {err && <div className="mb-2 text-xs text-destructive">{err}</div>}
       <div className="flex items-center gap-2">
         <button
           disabled={busy}
-          onClick={() => resolve("approve")}
+          onClick={approve}
           className="rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background hover:opacity-85 disabled:opacity-40"
         >
           通过,继续往下
         </button>
-        {!rejecting ? (
-          <button
-            disabled={busy}
-            onClick={() => setRejecting(true)}
-            className="rounded-full bg-destructive/10 px-4 py-2 text-sm text-destructive hover:bg-destructive/15 disabled:opacity-40"
-          >
-            打回
-          </button>
-        ) : (
-          <>
-            <button
-              disabled={busy}
-              onClick={() => resolve("reject")}
-              className="rounded-full bg-destructive px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
-            >
-              确认打回
-            </button>
-            <button
-              onClick={() => {
-                setRejecting(false);
-                setNote("");
-                setErr("");
-              }}
-              className="rounded-full px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
-            >
-              算了
-            </button>
-          </>
-        )}
+        <button
+          disabled={busy}
+          onClick={onReject}
+          className="rounded-full bg-destructive/10 px-4 py-2 text-sm text-destructive hover:bg-destructive/15 disabled:opacity-40"
+        >
+          打回
+        </button>
         <span className="ml-auto hidden text-xs text-muted-foreground sm:block">
-          通过后 agent 自动做下一阶段
+          打回前会列出哪些阶段跟着重出
         </span>
       </div>
     </div>
